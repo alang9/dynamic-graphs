@@ -11,7 +11,7 @@ import qualified Data.Tree as Tree
 
 import qualified Data.MTree.Avl as Avl
 
-newtype EulerTourForest s v = EulerTourForest {etf :: Map.Map (v, v) (Avl.Tree s (v, v))}
+newtype EulerTourForest s v = EulerTourForest {etf :: Map.Map (v, v) (Avl.Tree s (v, v) ())}
 
 -- values in nodes must be unique
 fromTree :: (PrimMonad m, s ~ PrimState m, Ord v, Show v) => Tree.Tree v -> m (EulerTourForest s v)
@@ -21,7 +21,7 @@ fromTree tree = do
   where
     go node m tn@(Tree.Node l children) = do
       root1 <- Avl.root node
-      newNode <- Avl.snoc root1 (l, l)
+      newNode <- Avl.snoc root1 (l, l) ()
       let m' = Map.insert (l, l) newNode m
       (newNode2, m'') <- foldM (go' l) (root1, m') children
       valid <- Avl.checkValid newNode2
@@ -30,14 +30,14 @@ fromTree tree = do
         else error $ "invalid: " ++ show tn
     go' parent (node, m) tr@(Tree.Node l _) = do
       root1 <- Avl.root node
-      newNode <- Avl.snoc root1 (parent, l)
+      newNode <- Avl.snoc root1 (parent, l) ()
       (lastNode, m'') <- go newNode m tr
       root2 <- Avl.root lastNode
-      newNode2 <- Avl.snoc root2 (l, parent)
+      newNode2 <- Avl.snoc root2 (l, parent) ()
       let m' = Map.insert (l, parent) newNode2 $ Map.insert (parent, l) newNode m''
       return (newNode2, m')
 
-findRoot :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> EulerTourForest s v -> Maybe (m (Avl.Tree s (v, v)))
+findRoot :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> EulerTourForest s v -> Maybe (m (Avl.Tree s (v, v) ()))
 findRoot v (EulerTourForest m) = Avl.root <$> Map.lookup (v, v) m
 
 cut :: (PrimMonad m, s ~ PrimState m, Ord v, Show v) => v -> v -> EulerTourForest s v -> Maybe (m (EulerTourForest s v))
@@ -67,7 +67,7 @@ cut a b (EulerTourForest etf) = case (Map.lookup (a, b) etf, Map.lookup (b, a) e
   _ -> error "cut: Invalid state"
 
 -- | reroot the represented tree by shifting the euler tour
-reroot :: (PrimMonad m, s ~ PrimState m, Show a) => Avl.Tree s a -> m ()
+reroot :: (PrimMonad m, s ~ PrimState m, Show a) => Avl.Tree s a () -> m ()
 reroot t = do
   (pre, post) <- Avl.split t
   emp <- Avl.empty
@@ -83,7 +83,7 @@ connected a b (EulerTourForest etf) = case (Map.lookup (a, a) etf, Map.lookup (b
   (Just aLoop, Just bLoop) -> Just $ connectedTree aLoop bLoop
   _ -> Nothing
 
-connectedTree :: (PrimMonad m, s ~ PrimState m) => Avl.Tree s a -> Avl.Tree s a -> m Bool
+connectedTree :: (PrimMonad m, s ~ PrimState m) => Avl.Tree s a () -> Avl.Tree s a () -> m Bool
 connectedTree a b = do
     aRoot <- Avl.root a
     bRoot <- Avl.root b
@@ -96,9 +96,9 @@ link a b (EulerTourForest etf) = case (Map.lookup (a, a) etf, Map.lookup (b, b) 
       False -> do
         reroot bLoop
         bLoopRoot <- Avl.root bLoop
-        abNode <- Avl.cons (a, b) bLoopRoot
+        abNode <- Avl.cons (a, b) () bLoopRoot
         bLoopRoot2 <- Avl.root bLoopRoot
-        baNode <- Avl.snoc bLoopRoot2 (b, a)
+        baNode <- Avl.snoc bLoopRoot2 (b, a) ()
         bLoopRoot3 <- Avl.root bLoopRoot2
         (aPre, aPost) <- Avl.split aLoop
         aPreRoot <- Avl.root aPre
@@ -130,7 +130,7 @@ discreteForest vs =
     go m v = do
       newL <- Avl.empty
       newR <- Avl.empty
-      node <- Avl.merge newL (v, v) newR
+      node <- Avl.merge newL (v, v) () newR
       return $ Map.insert (v, v) node m
 
 -- main :: IO ()

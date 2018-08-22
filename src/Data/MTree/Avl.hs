@@ -14,45 +14,50 @@ import qualified Data.Tree as Tree
 
 import Debug.Trace
 
-data Node s a = Node
-  { parent :: Maybe (Tree s a)
-  , lower :: Maybe (LowerNode s a)
+data Node s a v = Node
+  { parent :: Maybe (Tree s a v)
+  , lower :: Maybe (LowerNode s a v)
   }
 
-data LowerNode s a = LowerNode
+data LowerNode s a v = LowerNode
   { label :: a
   , height :: !Int
-  , leftChild :: !(Tree s a)
-  , rightChild :: !(Tree s a)
+  , value :: !v
+  , aggregate :: !v
+  , leftChild :: !(Tree s a v)
+  , rightChild :: !(Tree s a v)
   }
 
-type Tree s a = MutVar s (Node s a)
+type Tree s a v = MutVar s (Node s a v)
 
 -- | Join 2 trees, with a new node in the middle. Returns the new node (not necessarily the root of the tree)
-merge :: (PrimMonad m, s ~ PrimState m) => Tree s a -> a -> Tree s a -> m (Tree s a)
-merge l c r = do
+merge :: (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> a -> v -> Tree s a v -> m (Tree s a v)
+merge l ca cv r = do
   newL <- empty
   newR <- empty
-  new <- newMutVar Node {parent = Nothing, lower = Just LowerNode {label = c, leftChild = newL, rightChild = newR, height = 0}}
+  new <- newMutVar Node {parent = Nothing, lower = Just LowerNode {label = ca, value = cv, aggregate = cv, leftChild = newL, rightChild = newR, height = 0}}
   merge' l new r
   return new
 
-merge' :: (PrimMonad m, s ~ PrimState m) => Tree s a -> Tree s a -> Tree s a -> m ()
+merge' :: (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> Tree s a v -> Tree s a v -> m ()
 merge' l c r = do
   l' <- readMutVar l
   r' <- readMutVar r
   let lh = height' l'
   let rh = height' r'
+  let la = aggregate' l'
+  let ra = aggregate' r'
   case () of
     _ | abs (lh - rh) <= 1 -> do
-        let newHeight = max lh rh + 1
         void $ cutChildren c
         void $ cutParent c
         c' <- readMutVar c
         case lower c' of
           Nothing -> error "merge': c must have lower node"
           Just c_ -> do
-            writeMutVar c $ c' {lower = Just c_ {leftChild = l, rightChild = r, height = newHeight}}
+            let newHeight = max lh rh + 1
+            let newAggregate = la <> value c_ <> ra
+            writeMutVar c $ c' {lower = Just c_ {leftChild = l, rightChild = r, height = newHeight, aggregate = newAggregate}}
             modifyMutVar l $ \l' -> l' {parent = Just c}
             modifyMutVar r $ \r' -> r' {parent = Just c}
         case (parent l', parent r') of
@@ -77,10 +82,11 @@ merge' l c r = do
       | otherwise -> error "merge': impossible clause"
   where
     height' Node {..} = maybe (-1) height lower
+    aggregate' Node {..} = maybe mempty aggregate lower
     parent' Nothing = return Nothing
     parent' (Just n) = parent <$> readMutVar n
 
-deleteLeftmost :: (PrimMonad m, s ~ PrimState m) => Tree s a -> m (Maybe (Tree s a, Tree s a))
+deleteLeftmost :: (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> m (Maybe (Tree s a v, Tree s a v))
 deleteLeftmost t = do
   t' <- readMutVar t
   case lower t' of
@@ -97,7 +103,7 @@ deleteLeftmost t = do
               void $ swapChild t tr
               return $ Just (t, tr)
 
-deleteRightmost :: (PrimMonad m, s ~ PrimState m) => Tree s a -> m (Maybe (Tree s a, Tree s a))
+deleteRightmost :: (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> m (Maybe (Tree s a v, Tree s a v))
 deleteRightmost t = do
   t' <- readMutVar t
   case lower t' of
@@ -114,7 +120,7 @@ deleteRightmost t = do
               void $ swapChild t tl
               return $ Just (tl, t)
 
-append :: (PrimMonad m, s ~ PrimState m) => Tree s a -> Tree s a -> m Bool
+append :: (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> Tree s a v -> m Bool
 append a b = do
   m'aSplit <- deleteRightmost a
   case m'aSplit of
@@ -131,7 +137,7 @@ append a b = do
           return True
         Nothing -> return False
 
-cutChildren :: (PrimMonad m, s ~ PrimState m) => Tree s a -> m (Maybe (Tree s a, Tree s a))
+cutChildren :: (PrimMonad m, s ~ PrimState m) => Tree s a v -> m (Maybe (Tree s a v, Tree s a v))
 cutChildren t = do
   t' <- readMutVar t
   case lower t' of
@@ -144,7 +150,7 @@ cutChildren t = do
       modifyMutVar' (rightChild t_) $ \r' -> r' {parent = Nothing}
       return $ Just (leftChild t_, rightChild t_)
 
-cutParent :: (PrimMonad m, s ~ PrimState m) => Tree s a -> m (Maybe (Tree s a))
+cutParent :: (PrimMonad m, s ~ PrimState m) => Tree s a v -> m (Maybe (Tree s a v))
 cutParent t = do
   t' <- readMutVar t
   case parent t' of
@@ -161,7 +167,7 @@ cutParent t = do
       return (Just p)
 
 -- | replaced a by b in a's parent. Returns False on failure.
-swapChild :: (PrimMonad m, s ~ PrimState m) => Tree s a -> Tree s a -> m Bool
+swapChild :: (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> Tree s a v -> m Bool
 swapChild a b = do
   a' <- readMutVar a
   case parent a' of
@@ -179,10 +185,12 @@ swapChild a b = do
       rebalance p
       return True
 
-empty :: (PrimMonad m, s ~ PrimState m) => m (Tree s a)
+empty :: (PrimMonad m, s ~ PrimState m) => m (Tree s a v)
 empty = newMutVar (Node Nothing Nothing)
 
-split :: (PrimMonad m, s ~ PrimState m, Show a) => Tree s a -> m (Tree s a, Tree s a)
+split ::
+  (PrimMonad m, s ~ PrimState m, Show a, Monoid v, Eq v) =>
+  Tree s a v -> m (Tree s a v, Tree s a v)
 split t = do
   t' <- readMutVar t
   (l, r) <- case lower t' of
@@ -221,29 +229,32 @@ split t = do
                   go pRoot r
               | otherwise -> error $ "split: invalid state: " ++ show (label p_)
 
-root :: (PrimMonad m, s ~ PrimState m) => Tree s a -> m (Tree s a)
+root :: (PrimMonad m, s ~ PrimState m) => Tree s a v -> m (Tree s a v)
 root t = do
   t' <- readMutVar t
   case parent t' of
     Nothing -> return t
     Just p -> root p
 
-snoc :: (PrimMonad m, s ~ PrimState m) => Tree s a -> a -> m (Tree s a)
-snoc t a = do
+snoc ::
+  (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> a -> v -> m (Tree s a v)
+snoc t a v = do
   emptyTree <- empty
-  merge t a emptyTree
+  merge t a v emptyTree
 
-cons :: (PrimMonad m, s ~ PrimState m) => a -> Tree s a -> m (Tree s a)
-cons a t = do
+cons ::
+  (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => a -> v -> Tree s a v -> m (Tree s a v)
+cons a v t = do
   emptyTree <- empty
-  merge emptyTree a t
+  merge emptyTree a v t
 
-fromList :: forall m s a. (PrimMonad m, s ~ PrimState m) => [a] -> m (Tree s a)
+fromList ::
+  forall m s a v. (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => [(a, v)] -> m (Tree s a v)
 fromList xs = do
-  (emptyTree :: Tree s a) <- empty
-  foldM (\t a -> snoc t a >>= root) emptyTree xs
+  (emptyTree :: Tree s a v) <- empty
+  foldM (\t (a, v) -> snoc t a v >>= root) emptyTree xs
 
-freeze :: (PrimMonad m, s ~ PrimState m) => Tree s a -> m (Maybe (Tree.Tree a))
+freeze :: (PrimMonad m, s ~ PrimState m) => Tree s a v -> m (Maybe (Tree.Tree a))
 freeze t = do
   Node {..} <- readMutVar t
   case lower of
@@ -253,23 +264,26 @@ freeze t = do
       let children = catMaybes children'm
       return $ Just $ Tree.Node label children
 
-rebalance :: forall m s a. (PrimMonad m, s ~ PrimState m) => Tree s a -> m ()
+rebalance :: forall m s a v. (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> m ()
 rebalance n = do
   n' <- readMutVar n
   case lower n' of
     Nothing -> return ()
     Just n_ -> do
-      (l'' :: Node s a) <- readMutVar $ leftChild n_
-      (r'' :: Node s a) <- readMutVar $ rightChild n_
+      (l'' :: Node s a v) <- readMutVar $ leftChild n_
+      (r'' :: Node s a v) <- readMutVar $ rightChild n_
       let lh = height' l''
       let rh = height' r''
+      let la = aggregate' l''
+      let ra = aggregate' r''
       let newHeight = max lh rh + 1
+      let newAggregate = la <> value n_ <> ra
       case () of
         _ | abs (lh - rh) <= 1 ->
-          if newHeight == height n_
+          if newHeight == height n_ && newAggregate == aggregate n_
             then return ()
             else do
-              writeMutVar n $ n' {lower = Just n_ {height = newHeight}}
+              writeMutVar n $ n' {lower = Just n_ {height = newHeight, aggregate = newAggregate}}
               mapM_ rebalance $ parent n'
           | lh > rh, Just l_ <- lower l'' -> do
               ll' <- readMutVar $ leftChild l_
@@ -297,8 +311,9 @@ rebalance n = do
   where
     err = error "rebalance: invalid state"
     height' Node {..} = maybe (-1) height lower
+    aggregate' Node {..} = maybe mempty aggregate lower
 
-leftRotate :: (PrimMonad m, s ~ PrimState m) => Tree s a -> m ()
+leftRotate :: (PrimMonad m, s ~ PrimState m, Monoid v) => Tree s a v -> m ()
 leftRotate n = do
   n' <- readMutVar n
   let Just n_ = lower n'
@@ -308,10 +323,12 @@ leftRotate n = do
   rl'' <- readMutVar $ leftChild r_
   rr'' <- readMutVar $ rightChild r_
   let newNHeight = max (height' rl'') (height' l'') + 1
+  let newNAggregate = aggregate' l'' <> value n_ <> aggregate' rl''
   let newRHeight = max (height' rr'') (newNHeight) + 1
-  writeMutVar n $ n' {parent = Just (rightChild n_), lower = Just n_ {rightChild = leftChild r_, height = newNHeight}}
+  let newRAggregate = newNAggregate <> value r_ <> aggregate' rr''
+  writeMutVar n $ n' {parent = Just (rightChild n_), lower = Just n_ {rightChild = leftChild r_, height = newNHeight, aggregate = newNAggregate}}
   modifyMutVar' (leftChild r_) $ \rl' -> rl' {parent = Just n}
-  writeMutVar (rightChild n_) $ r'' {parent = parent n', lower = Just r_ {leftChild = n, height = newRHeight}}
+  writeMutVar (rightChild n_) $ r'' {parent = parent n', lower = Just r_ {leftChild = n, height = newRHeight, aggregate = newRAggregate}}
   forM_ (parent n') $ \p -> modifyMutVar' p $ \p' -> case lower p' of
     Nothing -> error "leftRotate"
     Just p_ | leftChild p_ == n -> p' {lower = Just p_ { leftChild = rightChild n_ }}
@@ -319,8 +336,9 @@ leftRotate n = do
             | otherwise -> error "leftRotate"
   where
     height' Node {..} = maybe (-1) height lower
+    aggregate' Node {..} = maybe mempty aggregate lower
 
-rightRotate :: (PrimMonad m, s ~ PrimState m) => Tree s a -> m ()
+rightRotate :: (PrimMonad m, s ~ PrimState m, Monoid v) => Tree s a v -> m ()
 rightRotate n = do
   n' <- readMutVar n
   let Just n_ = lower n'
@@ -330,10 +348,12 @@ rightRotate n = do
   ll'' <- readMutVar $ leftChild l_
   lr'' <- readMutVar $ rightChild l_
   let newNHeight = max (height' lr'') (height' r'') + 1
+  let newNAggregate = aggregate' lr'' <> value n_ <> aggregate' r''
   let newLHeight = max (height' ll'') (newNHeight) + 1
-  writeMutVar n $ n' {parent = Just (leftChild n_), lower = Just n_ {leftChild = rightChild l_, height = newNHeight}}
+  let newLAggregate = aggregate' ll'' <> value l_ <> newNAggregate
+  writeMutVar n $ n' {parent = Just (leftChild n_), lower = Just n_ {leftChild = rightChild l_, height = newNHeight, aggregate = newNAggregate}}
   modifyMutVar' (rightChild l_) $ \lr' -> lr' {parent = Just n}
-  writeMutVar (leftChild n_) $ l'' {parent = parent n', lower = Just l_ {rightChild = n, height = newLHeight}}
+  writeMutVar (leftChild n_) $ l'' {parent = parent n', lower = Just l_ {rightChild = n, height = newLHeight, aggregate = newLAggregate}}
   forM_ (parent n') $ \p -> modifyMutVar' p $ \p' -> case lower p' of
     Nothing -> error "rightRotate"
     Just p_ | leftChild p_ == n -> p' {lower = Just p_ { leftChild = leftChild n_ }}
@@ -341,8 +361,9 @@ rightRotate n = do
             | otherwise -> error "rightRotate"
   where
     height' Node {..} = maybe (-1) height lower
+    aggregate' Node {..} = maybe mempty aggregate lower
 
-checkValid :: (PrimMonad m, s ~ PrimState m) => Tree s a -> m Bool
+checkValid :: (PrimMonad m, s ~ PrimState m) => Tree s a v -> m Bool
 checkValid t = do
   t' <- readMutVar t
   case lower t' of
