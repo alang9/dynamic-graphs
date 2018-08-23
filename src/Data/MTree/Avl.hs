@@ -189,7 +189,7 @@ empty :: (PrimMonad m, s ~ PrimState m) => m (Tree s a v)
 empty = newMutVar (Node Nothing Nothing)
 
 split ::
-  (PrimMonad m, s ~ PrimState m, Show a, Monoid v, Eq v) =>
+  (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) =>
   Tree s a v -> m (Tree s a v, Tree s a v)
 split t = do
   t' <- readMutVar t
@@ -227,7 +227,7 @@ split t = do
                   merge' pl p l
                   pRoot <- root p
                   go pRoot r
-              | otherwise -> error $ "split: invalid state: " ++ show (label p_)
+              | otherwise -> error $ "split: invalid state"
 
 root :: (PrimMonad m, s ~ PrimState m) => Tree s a v -> m (Tree s a v)
 root t = do

@@ -13,8 +13,11 @@ import qualified Data.MTree.Avl as Avl
 
 newtype EulerTourForest s v = EulerTourForest {etf :: Map.Map (v, v) (Avl.Tree s (v, v) ())}
 
+empty :: EulerTourForest s v
+empty = EulerTourForest Map.empty
+
 -- values in nodes must be unique
-fromTree :: (PrimMonad m, s ~ PrimState m, Ord v, Show v) => Tree.Tree v -> m (EulerTourForest s v)
+fromTree :: (PrimMonad m, s ~ PrimState m, Ord v) => Tree.Tree v -> m (EulerTourForest s v)
 fromTree tree = do
   initial <- Avl.empty
   EulerTourForest . snd <$> go initial Map.empty tree
@@ -27,7 +30,7 @@ fromTree tree = do
       valid <- Avl.checkValid newNode2
       if valid
         then return (newNode2, m'')
-        else error $ "invalid: " ++ show tn
+        else error "fromTree: invalid"
     go' parent (node, m) tr@(Tree.Node l _) = do
       root1 <- Avl.root node
       newNode <- Avl.snoc root1 (parent, l) ()
@@ -40,7 +43,7 @@ fromTree tree = do
 findRoot :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> EulerTourForest s v -> Maybe (m (Avl.Tree s (v, v) ()))
 findRoot v (EulerTourForest m) = Avl.root <$> Map.lookup (v, v) m
 
-cut :: (PrimMonad m, s ~ PrimState m, Ord v, Show v) => v -> v -> EulerTourForest s v -> Maybe (m (EulerTourForest s v))
+cut :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> EulerTourForest s v -> Maybe (m (EulerTourForest s v))
 cut a b (EulerTourForest etf) = case (Map.lookup (a, b) etf, Map.lookup (b, a) etf) of
   _ | a == b -> Nothing -- Can't cut self-loops
   (Nothing, Nothing) -> Nothing -- No edge to cut
@@ -67,7 +70,7 @@ cut a b (EulerTourForest etf) = case (Map.lookup (a, b) etf, Map.lookup (b, a) e
   _ -> error "cut: Invalid state"
 
 -- | reroot the represented tree by shifting the euler tour
-reroot :: (PrimMonad m, s ~ PrimState m, Show a) => Avl.Tree s a () -> m ()
+reroot :: (PrimMonad m, s ~ PrimState m) => Avl.Tree s a () -> m ()
 reroot t = do
   (pre, post) <- Avl.split t
   emp <- Avl.empty
@@ -89,7 +92,7 @@ connectedTree a b = do
     bRoot <- Avl.root b
     return $ aRoot == bRoot
 
-link :: (PrimMonad m, s ~ PrimState m, Ord v, Show v) => v -> v -> EulerTourForest s v -> m (Maybe (EulerTourForest s v))
+link :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> EulerTourForest s v -> m (Maybe (EulerTourForest s v))
 link a b (EulerTourForest etf) = case (Map.lookup (a, a) etf, Map.lookup (b, b) etf) of
   (Just aLoop, Just bLoop) -> connectedTree aLoop bLoop >>= \case
       True -> return Nothing
