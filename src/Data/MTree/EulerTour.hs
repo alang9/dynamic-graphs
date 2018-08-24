@@ -1,5 +1,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Data.MTree.EulerTour where
 
@@ -7,11 +8,13 @@ import Control.Monad
 import Control.Monad.Primitive
 import Data.List
 import qualified Data.Map as Map
+import Data.Monoid
+import Data.Primitive.MutVar
 import qualified Data.Tree as Tree
 
 import qualified Data.MTree.Avl as Avl
 
-newtype EulerTourForest s v = EulerTourForest {etf :: Map.Map (v, v) (Avl.Tree s (v, v) ())}
+newtype EulerTourForest s v = EulerTourForest {etf :: Map.Map (v, v) (Avl.Tree s (v, v) (Sum Int))}
 
 empty :: EulerTourForest s v
 empty = EulerTourForest Map.empty
@@ -24,7 +27,7 @@ fromTree tree = do
   where
     go node m tn@(Tree.Node l children) = do
       root1 <- Avl.root node
-      newNode <- Avl.snoc root1 (l, l) ()
+      newNode <- Avl.snoc root1 (l, l) (Sum 1)
       let m' = Map.insert (l, l) newNode m
       (newNode2, m'') <- foldM (go' l) (root1, m') children
       valid <- Avl.checkValid newNode2
@@ -33,14 +36,14 @@ fromTree tree = do
         else error "fromTree: invalid"
     go' parent (node, m) tr@(Tree.Node l _) = do
       root1 <- Avl.root node
-      newNode <- Avl.snoc root1 (parent, l) ()
+      newNode <- Avl.snoc root1 (parent, l) (Sum 0)
       (lastNode, m'') <- go newNode m tr
       root2 <- Avl.root lastNode
-      newNode2 <- Avl.snoc root2 (l, parent) ()
+      newNode2 <- Avl.snoc root2 (l, parent) (Sum 0)
       let m' = Map.insert (l, parent) newNode2 $ Map.insert (parent, l) newNode m''
       return (newNode2, m')
 
-findRoot :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> EulerTourForest s v -> Maybe (m (Avl.Tree s (v, v) ()))
+findRoot :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> EulerTourForest s v -> Maybe (m (Avl.Tree s (v, v) (Sum Int)))
 findRoot v (EulerTourForest m) = Avl.root <$> Map.lookup (v, v) m
 
 cut :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> EulerTourForest s v -> Maybe (m (EulerTourForest s v))
@@ -53,7 +56,7 @@ cut a b (EulerTourForest etf) = case (Map.lookup (a, b) etf, Map.lookup (b, a) e
     root2 <- Avl.root part2
     rootBa <- Avl.root ba
     (l, c, r) <- case () of
-      _ | root1 == root2 -> error "cut: invalid state"
+      _ | root1 == root2 -> error "cut: invalid state 1"
         | root1 == rootBa -> do
             (part3, part4) <- Avl.split ba
             root3 <- Avl.root part3
@@ -64,13 +67,13 @@ cut a b (EulerTourForest etf) = case (Map.lookup (a, b) etf, Map.lookup (b, a) e
             root3 <- Avl.root part3
             root4 <- Avl.root part4
             return (root1, root3, root4)
-        | otherwise -> error "cut: invalid state"
+        | otherwise -> error "cut: invalid state 2"
     Avl.append l r
     return $ EulerTourForest $ Map.delete (a, b) $ Map.delete (b, a) etf
   _ -> error "cut: Invalid state"
 
 -- | reroot the represented tree by shifting the euler tour
-reroot :: (PrimMonad m, s ~ PrimState m) => Avl.Tree s a () -> m ()
+reroot :: (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Avl.Tree s a v -> m ()
 reroot t = do
   (pre, post) <- Avl.split t
   emp <- Avl.empty
@@ -86,7 +89,7 @@ connected a b (EulerTourForest etf) = case (Map.lookup (a, a) etf, Map.lookup (b
   (Just aLoop, Just bLoop) -> Just $ connectedTree aLoop bLoop
   _ -> Nothing
 
-connectedTree :: (PrimMonad m, s ~ PrimState m) => Avl.Tree s a () -> Avl.Tree s a () -> m Bool
+connectedTree :: (PrimMonad m, s ~ PrimState m) => Avl.Tree s a v -> Avl.Tree s a v -> m Bool
 connectedTree a b = do
     aRoot <- Avl.root a
     bRoot <- Avl.root b
@@ -99,9 +102,9 @@ link a b (EulerTourForest etf) = case (Map.lookup (a, a) etf, Map.lookup (b, b) 
       False -> do
         reroot bLoop
         bLoopRoot <- Avl.root bLoop
-        abNode <- Avl.cons (a, b) () bLoopRoot
+        abNode <- Avl.cons (a, b) (Sum 0) bLoopRoot
         bLoopRoot2 <- Avl.root bLoopRoot
-        baNode <- Avl.snoc bLoopRoot2 (b, a) ()
+        baNode <- Avl.snoc bLoopRoot2 (b, a) (Sum 0)
         bLoopRoot3 <- Avl.root bLoopRoot2
         (aPre, aPost) <- Avl.split aLoop
         aPreRoot <- Avl.root aPre
@@ -133,24 +136,16 @@ discreteForest vs =
     go m v = do
       newL <- Avl.empty
       newR <- Avl.empty
-      node <- Avl.merge newL (v, v) () newR
+      node <- Avl.merge newL (v, v) (Sum 1) newR
       return $ Map.insert (v, v) node m
 
--- main :: IO ()
--- main = do
---   putStrLn $ Tree.drawTree $ fmap show tree1
---   t1 <- fromTree tree1
---   showEtf t1
---   case t1 of
---     EulerTourForest t1' -> case Map.lookup (1, 2) t1' of
---       Nothing -> traceShowM ("BAD", Map.keys t1')
---       Just n -> do
---         nRoot <- Avl.root n
---         Avl.checkValid nRoot >>= print . (,) "validity"
---   traceM "cut"
---   let Just t2 = cut 1 2 t1
---   t3 <- t2
---   traceM "link"
---   Just t4 <- link 1 2 t3
---   let t = t4
---   showEtf t
+componentSize :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> EulerTourForest s v -> m Int
+componentSize v EulerTourForest {..} =
+  case Map.lookup (v, v) etf of
+    Nothing -> return 0
+    Just tree -> do
+      tree' <- Avl.root tree
+      Avl.Node {..} <- readMutVar tree'
+      case lower of
+        Nothing -> error "componentSize: invalid state"
+        Just Avl.LowerNode {..} -> return $ getSum aggregate

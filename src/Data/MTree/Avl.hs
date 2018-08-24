@@ -254,6 +254,16 @@ fromList xs = do
   (emptyTree :: Tree s a v) <- empty
   foldM (\t (a, v) -> snoc t a v >>= root) emptyTree xs
 
+toList :: (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> m [a]
+toList t = do
+  t' <- readMutVar t
+  case lower t' of
+    Nothing -> return []
+    Just LowerNode {..} -> do
+      left <- toList leftChild
+      right <- toList rightChild
+      return $ left ++ label : right
+
 freeze :: (PrimMonad m, s ~ PrimState m) => Tree s a v -> m (Maybe (Tree.Tree a))
 freeze t = do
   Node {..} <- readMutVar t
