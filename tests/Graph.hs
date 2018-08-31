@@ -8,7 +8,7 @@ type Vertex = Int
 data Graph = Graph
   { numNodes :: !Vertex
   , edges :: !(Set (Vertex, Vertex))
-  }
+  } deriving (Show)
 
 discreteGraph :: Int -> Graph
 discreteGraph n = Graph n $ Set.fromList [(v,v) | v <- [0..n-1]]
