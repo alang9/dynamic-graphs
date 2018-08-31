@@ -1,6 +1,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Data.MGraph where
 
@@ -32,7 +33,7 @@ fromVertices :: (PrimMonad m, s ~ PrimState m, Ord v) => [v] -> m (Levels s v)
 fromVertices xs = Levels (Set.fromList xs) Set.empty <$> VM.new 0
 
 insert :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Levels s v -> m (Levels s v)
-insert a b levels@Levels {..} = traceShow (numEdges) $
+insert a b levels@Levels {..} = --traceShow (numEdges, VM.length unLevels, Set.member (a, b) allEdges) $
   if Set.member (a, b) allEdges
     then return Levels {..}
     else do
@@ -44,16 +45,17 @@ insert a b levels@Levels {..} = traceShow (numEdges) $
           df <- ET.discreteForest $ Set.toList vertices
           VM.write newUnLevels levelIdx (df, Map.empty)
         return newUnLevels
+      -- traceShowM (VM.null levels')
       if VM.null levels'
         then return levels
         else do
           (thisEtf, thisEdges) <- VM.read levels' 0
           m'newEtf <- ET.link a b thisEtf
-          traceShowM $ const () <$> m'newEtf
-          let newEtf = maybe thisEtf id m'newEtf
-              newEdges = Map.insertWith Set.union a (Set.singleton b) $
+          -- traceShowM $ (numEdges, m'newEtf)
+          -- traceShowM $ (numEdges, "test3")
+          let newEdges = Map.insertWith Set.union a (Set.singleton b) $
                 Map.insertWith Set.union b (Set.singleton a) thisEdges
-          VM.write levels' 0 (newEtf, newEdges)
+          VM.write levels' 0 (thisEtf, newEdges)
           return Levels {allEdges = newAllEdges, unLevels = levels', ..}
   where
     numEdges = Set.size newAllEdges `div` 2
@@ -64,9 +66,9 @@ connected a b Levels {..} = if VM.null unLevels
   then return $ Just $ a == b
   else do
     (etf, _) <- VM.read unLevels 0
-    sequenceA $ ET.connected a b etf
+    ET.connected a b etf
 
-delete :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Levels s v -> m (Levels s v)
+delete :: forall m s v. (PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Levels s v -> m (Levels s v)
 delete a b Levels {..}
   -- | a == b = return Levels {..}
   | VM.length unLevels == 0 = return Levels {..}
@@ -75,35 +77,72 @@ delete a b Levels {..}
       return Levels {allEdges = newAllEdges, ..}
   where
     newAllEdges = Set.delete (a, b) $ Set.delete (b, a) allEdges
+    go :: Int -> m ()
     go idx = do
+      -- traceShowM ("go", idx)
       (etf, edges) <- VM.read unLevels idx
-      case ET.cut a b etf of
-        Nothing -> VM.write unLevels idx (etf, edges)
-        Just goEtf -> do
-          etf' <- goEtf
-          edges' <- do
+      cutResult <- ET.cut a b etf
+      let edges' = Map.adjust (Set.delete b) a $ Map.adjust (Set.delete a) b edges
+      case cutResult of
+        False -> do
+          VM.write unLevels idx (etf, edges')
+          when (idx > 0) $ go (idx - 1)
+        True -> do
+          aSize <- ET.componentSize a etf
+          bSize <- ET.componentSize b etf
+          let (smaller, bigger) = if aSize <= bSize then (a, b) else (b, a)
+          Just sRoot <- ET.findRoot smaller etf
+          sEdges <- Avl.toList sRoot
+          (edges'', mPrevEdges) <- do
             if not (idx + 1 < VM.length unLevels)
-              then return edges
+              then return (edges', Nothing)
               else do
-                Just aRoot <- sequenceA $ ET.findRoot a etf'
-                Just bRoot <- sequenceA $ ET.findRoot b etf'
-                aEdges <- Avl.toList aRoot
-                bEdges <- Avl.toList bRoot
                 (prevEtf, prevEdges) <- VM.read unLevels (idx + 1)
-                let go' (oldPrevEtf, oldPrevEdges, oldEdges) (c, d) =
-                      ET.link c d oldPrevEtf >>= \case
-                        Nothing -> do
-                          return ( oldPrevEtf
-                                 , Map.adjust (Set.insert b) a (Map.adjust (Set.insert a) b oldPrevEdges)
-                                 , Map.adjust (Set.delete b) a (Map.adjust (Set.delete a) b oldEdges)
-                                 )
-                        Just newEtf -> do
-                          return ( newEtf
-                                 , Map.adjust (Set.insert b) a (Map.adjust (Set.insert a) b oldPrevEdges)
-                                 , Map.adjust (Set.delete b) a (Map.adjust (Set.delete a) b oldEdges)
-                                 )
-                (newPrevEtf, newPrevEdges, newEdges) <- foldM go' (prevEtf, prevEdges, edges) (aEdges ++ bEdges)
-                VM.write unLevels (idx + 1) (newPrevEtf, newPrevEdges)
-                return newEdges
-          VM.write unLevels idx (etf', Map.adjust (Set.delete b) a $ Map.adjust (Set.delete a) b edges')
-      when (idx > 0) $ go (idx - 1)
+                let go' (oldPrevEdges, oldEdges) (c, d) = do
+                      ET.link c d prevEtf
+                      return ( Map.insertWith Set.union d (Set.singleton c) (Map.insertWith Set.union c (Set.singleton d) oldPrevEdges)
+                             , Map.adjust (Set.delete c) d (Map.adjust (Set.delete d) c oldEdges)
+                             )
+                (newPrevEdges, newEdges) <- foldM go' (prevEdges, edges') sEdges
+                VM.write unLevels (idx + 1) (prevEtf, newPrevEdges)
+                return (newEdges, Just newPrevEdges)
+          let sVertices = map fst $ filter (uncurry (==)) sEdges
+          (replacementEdge, newEdges, m'newPrevEdges) <- findReplacement etf edges'' mPrevEdges bigger sVertices
+          -- traceShowM ("delete", idx, VM.length unLevels, edges, edges'', newEdges, bigger, sVertices)
+          -- traceShowM ("delete", idx)
+          VM.write unLevels idx (etf, newEdges)
+          case m'newPrevEdges of
+            Nothing -> return ()
+            Just newPrevEdges -> VM.modify unLevels (\(prevEtf, _) -> (prevEtf, newPrevEdges)) (idx + 1)
+          case replacementEdge of
+            Nothing -> when (idx > 0) $ go (idx - 1)
+            Just rep -> propagateReplacement (idx - 1) rep
+
+    propagateReplacement idx (c, d) = when (idx >= 0) $ do
+      (etf, _) <- VM.read unLevels idx
+      ET.cut a b etf
+      ET.link c d etf
+      propagateReplacement (idx - 1) (c, d)
+
+    findReplacement ::
+      EulerTourForest s v -> Map v (Set v) -> Maybe (Map v (Set v)) ->
+      v -> [v] ->
+      m (Maybe (v, v), Map v (Set v), Maybe (Map v (Set v)))
+    findReplacement _ remainingEdges m'prevEdges _ [] = return (Nothing, remainingEdges, m'prevEdges)
+    findReplacement f remainingEdges m'prevEdges other (x:xs) = case Set.minView xEdges of
+      Nothing -> findReplacement f remainingEdges m'prevEdges other xs
+      Just (c, _) -> do
+        cConnected <- ET.connected c other f
+        if maybe err id cConnected
+          then do
+            True <- ET.link c x f
+            return (Just (c, x), remainingEdges, m'prevEdges)
+          else
+            findReplacement f
+              (Map.adjust (Set.delete c) x $ Map.adjust (Set.delete x) c $ remainingEdges)
+              (Map.insertWith Set.union x (Set.singleton c) . Map.insertWith Set.union c (Set.singleton x) <$> m'prevEdges)
+              other (x:xs)
+      where
+        xEdges = maybe Set.empty id $ Map.lookup x remainingEdges
+        err = error "delete.findReplacement: invalid state"
+
