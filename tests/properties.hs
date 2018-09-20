@@ -11,6 +11,7 @@ import Control.Monad
 import Control.Monad.ST
 import Data.List
 import Data.Maybe
+import Data.Primitive.MutVar
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Test.Framework.TH
@@ -119,31 +120,32 @@ runSlowGraphAction sf@Graph {..} (Query x y) = (sf, Just (Set.member y' $ compon
     y' = mod y numNodes
 
 runGraphAction ::
-  Int -> (MGraph.Levels s Int, [Bool]) -> Action t -> ST s (MGraph.Levels s Int, [Bool])
-runGraphAction n (levels, xs) (Cut x y) = do
-    levels' <- MGraph.delete x' y' levels
-    return (levels', xs)
+  Int -> MGraph.Levels s Int -> [Bool] -> Action t -> ST s [Bool]
+runGraphAction n levels xs (Cut x y) = do
+    MGraph.delete x' y' levels
+    return xs
   where
     x' = mod x n
     y' = mod y n
-runGraphAction n (levels, xs) (Link x y) = do
-  levels' <- MGraph.insert x' y' levels
-  return (levels', xs)
+runGraphAction n levels xs (Link x y) = do
+  MGraph.insert x' y' levels
+  return xs
   where
     x' = mod x n
     y' = mod y n
-runGraphAction n (levels, xs) (Toggle x y) = do
-  levels' <- if Set.member (x', y') (MGraph.allEdges levels)
+runGraphAction n levels xs (Toggle x y) = do
+  MGraph.L {..} <- readMutVar levels
+  if Set.member (x', y') allEdges
     then MGraph.delete x' y' levels
     else MGraph.insert x' y' levels
-  return (levels', xs)
+  return xs
   where
     x' = mod x n
     y' = mod y n
-runGraphAction n (levels, xs) (Query x y) = MGraph.connected x' y' levels >>= \case
-  Nothing -> return (levels, xs)
+runGraphAction n levels xs (Query x y) = MGraph.connected x' y' levels >>= \case
+  Nothing -> return xs
   Just q -> do
-    return (levels, q:xs)
+    return (q:xs)
   where
     x' = mod x n
     y' = mod y n
@@ -156,7 +158,7 @@ prop_graph_linkcut (Positive n) actions = slowResult === result
     result :: [Bool]
     result = runST $ do
       initialGraph <- MGraph.fromVertices [0..n-1]
-      (_finalGraph, results) <- foldM (runGraphAction n) (initialGraph, []) actions
+      results <- foldM (runGraphAction n initialGraph) [] actions
       return $ reverse results
 
 prop_graph_toggle :: Positive Int -> [Action 'Toggl] -> Property
@@ -167,7 +169,7 @@ prop_graph_toggle (Positive n) actions = slowResult === result
     result :: [Bool]
     result = runST $ do
       initialGraph <- MGraph.fromVertices [0..n-1]
-      (_finalGraph, results) <- foldM (runGraphAction n) (initialGraph, []) actions
+      results <- foldM (runGraphAction n initialGraph) [] actions
       return $ reverse results
 
 main :: IO ()

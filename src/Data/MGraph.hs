@@ -10,6 +10,7 @@ import Control.Monad.Primitive
 import Data.Bits
 import qualified Data.Map as Map
 import Data.Map (Map)
+import Data.Primitive.MutVar
 import qualified Data.Set as Set
 import Data.Set (Set)
 import qualified Data.Vector.Mutable as VM
@@ -20,24 +21,29 @@ import Data.MTree.EulerTour (EulerTourForest)
 
 import Debug.Trace
 
-data Levels s v = Levels
+data L s v = L
   { vertices :: Set v
   , allEdges :: !(Set (v, v))
   , unLevels :: !(VM.MVector s (EulerTourForest s v, Map v (Set v)))
   }
 
+type Levels s v = MutVar s (L s v)
+
 logBase2 :: Int -> Int
 logBase2 x = finiteBitSize x - 1 - countLeadingZeros x
 
 fromVertices :: (PrimMonad m, s ~ PrimState m, Ord v) => [v] -> m (Levels s v)
-fromVertices xs = Levels (Set.fromList xs) Set.empty <$> VM.new 0
+fromVertices xs = newMutVar =<< L (Set.fromList xs) Set.empty <$> VM.new 0
 
-insert :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Levels s v -> m (Levels s v)
-insert a b levels@Levels {..} = --traceShow (numEdges, VM.length unLevels, Set.member (a, b) allEdges) $
+insert :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Levels s v -> m ()
+insert a b levels = do --traceShow (numEdges, VM.length unLevels, Set.member (a, b) allEdges) $
+  L {..} <- readMutVar levels
+  let newAllEdges = if a == b then allEdges else Set.insert (b, a) $ Set.insert (a, b) allEdges
+      numEdges = Set.size newAllEdges `div` 2
   if Set.member (a, b) allEdges
-    then return Levels {..}
+    then return ()
     else do
-      levels' <- do
+      unLevels' <- do
         let oldNumLevels = VM.length unLevels
         newUnLevels <- VM.take (logBase2 numEdges + 1) <$>
           VM.grow unLevels (max 0 $ logBase2 numEdges - oldNumLevels + 1)
@@ -46,39 +52,40 @@ insert a b levels@Levels {..} = --traceShow (numEdges, VM.length unLevels, Set.m
           VM.write newUnLevels levelIdx (df, Map.empty)
         return newUnLevels
       -- traceShowM (VM.null levels')
-      if VM.null levels'
-        then return levels
+      if VM.null unLevels'
+        then return ()
         else do
-          (thisEtf, thisEdges) <- VM.read levels' 0
+          (thisEtf, thisEdges) <- VM.read unLevels' 0
           m'newEtf <- ET.link a b thisEtf
           -- traceShowM $ (numEdges, m'newEtf)
           -- traceShowM $ (numEdges, "test3")
           let newEdges = Map.insertWith Set.union a (Set.singleton b) $
                 Map.insertWith Set.union b (Set.singleton a) thisEdges
-          VM.write levels' 0 (thisEtf, newEdges)
-          return Levels {allEdges = newAllEdges, unLevels = levels', ..}
-  where
-    numEdges = Set.size newAllEdges `div` 2
-    newAllEdges = if a == b then allEdges else Set.insert (b, a) $ Set.insert (a, b) allEdges
+          VM.write unLevels' 0 (thisEtf, newEdges)
+          writeMutVar levels $ L {allEdges = newAllEdges, unLevels = unLevels', ..}
 
 connected :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Levels s v -> m (Maybe Bool)
-connected a b Levels {..} = if VM.null unLevels
-  then return $ Just $ a == b
-  else do
-    (etf, _) <- VM.read unLevels 0
-    ET.connected a b etf
+connected a b levels = do
+  L {..} <- readMutVar levels
+  if VM.null unLevels
+    then return $ Just $ a == b
+    else do
+      (etf, _) <- VM.read unLevels 0
+      ET.connected a b etf
 
-delete :: forall m s v. (PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Levels s v -> m (Levels s v)
-delete a b Levels {..}
+delete :: forall m s v. (PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Levels s v -> m ()
+delete a b levels = do
+  L {..} <- readMutVar levels
+  let newAllEdges = Set.delete (a, b) $ Set.delete (b, a) allEdges
   -- | a == b = return Levels {..}
-  | VM.length unLevels == 0 = return Levels {..}
-  | otherwise = do
-      go (VM.length unLevels-1)
-      return Levels {allEdges = newAllEdges, ..}
+  if VM.length unLevels == 0
+    then return ()
+    else do
+      go unLevels (VM.length unLevels-1)
+      writeMutVar levels L {allEdges = newAllEdges, ..}
   where
-    newAllEdges = Set.delete (a, b) $ Set.delete (b, a) allEdges
-    go :: Int -> m ()
-    go idx = do
+    go :: VM.MVector s (EulerTourForest s v, Map v (Set v)) -> Int -> m ()
+    go unLevels idx = do
       -- traceShowM ("go", idx)
       (etf, edges) <- VM.read unLevels idx
       cutResult <- ET.cut a b etf
@@ -86,7 +93,7 @@ delete a b Levels {..}
       case cutResult of
         False -> do
           VM.write unLevels idx (etf, edges')
-          when (idx > 0) $ go (idx - 1)
+          when (idx > 0) $ go unLevels (idx - 1)
         True -> do
           aSize <- ET.componentSize a etf
           bSize <- ET.componentSize b etf
@@ -115,14 +122,14 @@ delete a b Levels {..}
             Nothing -> return ()
             Just newPrevEdges -> VM.modify unLevels (\(prevEtf, _) -> (prevEtf, newPrevEdges)) (idx + 1)
           case replacementEdge of
-            Nothing -> when (idx > 0) $ go (idx - 1)
-            Just rep -> propagateReplacement (idx - 1) rep
+            Nothing -> when (idx > 0) $ go unLevels (idx - 1)
+            Just rep -> propagateReplacement unLevels (idx - 1) rep
 
-    propagateReplacement idx (c, d) = when (idx >= 0) $ do
+    propagateReplacement unLevels idx (c, d) = when (idx >= 0) $ do
       (etf, _) <- VM.read unLevels idx
       ET.cut a b etf
       ET.link c d etf
-      propagateReplacement (idx - 1) (c, d)
+      propagateReplacement unLevels (idx - 1) (c, d)
 
     findReplacement ::
       EulerTourForest s v -> Map v (Set v) -> Maybe (Map v (Set v)) ->
