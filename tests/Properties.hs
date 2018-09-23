@@ -5,7 +5,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 
-module Main where
+module Properties where
 
 import Control.Monad
 import Control.Monad.ST
@@ -14,6 +14,7 @@ import Data.Maybe
 import Data.Primitive.MutVar
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Test.Framework
 import Test.Framework.TH
 import Test.Framework.Providers.QuickCheck2
 import Test.QuickCheck
@@ -172,5 +173,5 @@ prop_graph_toggle (Positive n) actions = slowResult === result
       results <- foldM (runGraphAction n initialGraph) [] actions
       return $ reverse results
 
-main :: IO ()
-main = $defaultMainGenerator
+tests :: Test
+tests = $testGroupGenerator
