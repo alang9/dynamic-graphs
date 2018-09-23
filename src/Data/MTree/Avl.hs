@@ -101,6 +101,7 @@ deleteLeftmost t = do
             Nothing -> error "deleteLeftmost: invalid state"
             Just (_, tr) -> do
               void $ swapChild t tr
+              rebalanceParent tr
               return $ Just (t, tr)
 
 deleteRightmost :: (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> m (Maybe (Tree s a v, Tree s a v))
@@ -118,6 +119,7 @@ deleteRightmost t = do
             Nothing -> error "deleteRightmost: invalid state"
             Just (tl, _) -> do
               void $ swapChild t tl
+              rebalanceParent tl
               return $ Just (tl, t)
 
 append :: (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> Tree s a v -> m Bool
@@ -166,7 +168,7 @@ cutParent t = do
           | otherwise -> error "cutParent: invalid State"
       return (Just p)
 
--- | replaced a by b in a's parent. Returns False on failure.
+-- | replaced a by b in a's parent. Returns False on failure. Doesn't rebalance the parent.
 swapChild :: (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> Tree s a v -> m Bool
 swapChild a b = do
   a' <- readMutVar a
@@ -182,7 +184,6 @@ swapChild a b = do
           | otherwise -> error "swapChild: invalid state"
       writeMutVar a a' {parent = Nothing}
       modifyMutVar' b $ \b' -> b' {parent = Just p}
-      rebalance p
       return True
 
 empty :: (PrimMonad m, s ~ PrimState m) => m (Tree s a v)
@@ -193,20 +194,18 @@ split ::
   Tree s a v -> m (Tree s a v, Tree s a v)
 split t = do
   t' <- readMutVar t
-  (l, r) <- case lower t' of
+  m'children <- cutChildren t
+  case m'children of
+    Just (l, r) -> go l r
     Nothing -> do
-      (,) <$> empty <*> empty
-    Just t_ -> do
-      newL <- empty
-      newR <- empty
-      writeMutVar t $ t' {lower = Just t_ {leftChild = newL, rightChild = newR}}
-      modifyMutVar' (leftChild t_) $ \l' -> l' {parent = Nothing}
-      modifyMutVar' (rightChild t_) $ \r' -> r' {parent = Nothing}
-      return (leftChild t_, rightChild t_)
-  go l r
+      l <- empty
+      r <- empty
+      go l r
   where
     go l r = do
       t' <- readMutVar t
+      l' <- readMutVar l
+      r' <- readMutVar r
       case parent t' of
         Nothing -> return (l, r)
         Just p -> do
@@ -273,6 +272,13 @@ freeze t = do
       children'm <- sequence [freeze leftChild, freeze rightChild]
       let children = catMaybes children'm
       return $ Just $ Tree.Node label children
+
+rebalanceParent :: forall m s a v. (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> m ()
+rebalanceParent t = do
+  t' <- readMutVar t
+  case parent t' of
+    Nothing -> return ()
+    Just p -> rebalance p
 
 rebalance :: forall m s a v. (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> m ()
 rebalance n = do
