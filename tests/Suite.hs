@@ -1,9 +1,11 @@
+import qualified Data.MGraph.Tests
+import qualified Data.MTree.EulerTour.Tests
 import qualified Data.MTree.Splay.Tests
-import qualified Properties
 import           Test.Framework
 
 main :: IO ()
 main = defaultMain
-    [ Properties.tests
+    [ Data.MGraph.Tests.tests
+    , Data.MTree.EulerTour.Tests.tests
     , Data.MTree.Splay.Tests.tests
     ]
