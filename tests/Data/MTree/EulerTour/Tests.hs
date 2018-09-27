@@ -11,8 +11,6 @@ import Control.Monad
 import Control.Monad.ST
 import Data.List
 import Data.Maybe
-import Data.Primitive.MutVar
-import Data.Set (Set)
 import qualified Data.Set as Set
 import Test.Framework
 import Test.Framework.TH

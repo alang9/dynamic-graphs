@@ -23,7 +23,7 @@ module Data.MTree.FastAvl
     , assertRoot
     ) where
 
-import           Control.Monad           (foldM, void, when)
+import           Control.Monad           (foldM, when)
 import           Control.Monad.Primitive (PrimMonad (..))
 import           Data.List.NonEmpty      (NonEmpty)
 import qualified Data.List.NonEmpty      as NonEmpty

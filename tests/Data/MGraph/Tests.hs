@@ -12,14 +12,12 @@ import Control.Monad.ST
 import Data.List
 import Data.Maybe
 import Data.Primitive.MutVar
-import Data.Set (Set)
 import qualified Data.Set as Set
 import Test.Framework
 import Test.Framework.TH
 import Test.Framework.Providers.QuickCheck2
 import Test.QuickCheck
 
-import Data.MTree.EulerTour
 import qualified Data.MGraph as MGraph
 
 import Action
@@ -31,12 +29,12 @@ runSlowGraphAction Graph {..} (Cut x y) = (Graph {edges = Set.delete (x', y') (S
   where
     x' = mod x numNodes
     y' = mod y numNodes
-runSlowGraphAction sf@Graph {..} (Link x y) = (newSf, Nothing)
+runSlowGraphAction Graph {..} (Link x y) = (newSf, Nothing)
   where
     newSf = Graph {edges = Set.insert (x', y') (Set.insert (y', x') edges), ..}
     x' = mod x numNodes
     y' = mod y numNodes
-runSlowGraphAction sf@Graph {..} (Toggle x y) = (newSf, Nothing)
+runSlowGraphAction Graph {..} (Toggle x y) = (newSf, Nothing)
   where
     newSf = if Set.member (x', y') edges
       then Graph {edges = Set.delete (x', y') (Set.delete (y', x') edges), ..}

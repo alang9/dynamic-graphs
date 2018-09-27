@@ -3,11 +3,9 @@ module Data.MTree.FastAvl.Tests where
 
 import           Control.Monad.Primitive              (PrimMonad (..))
 import           Control.Monad.ST                     (runST)
-import           Control.Monad.ST
 import           Data.List.NonEmpty                   (NonEmpty)
 import qualified Data.List.NonEmpty                   as NonEmpty
 import qualified Data.MTree.FastAvl                   as FastAvl
-import qualified Data.MTree.Splay                     as Splay
 import           Data.Semigroup                       ((<>))
 import           Test.Framework                       (Test)
 import           Test.Framework.Providers.QuickCheck2 (testProperty)
@@ -74,7 +72,7 @@ prop_join j = runST $ do
 
 prop_split :: Int -> Joins Int () -> Bool
 prop_split idx j = runST $ do
-    (t, ptrs) <- joinsToTree j
+    (_t, ptrs) <- joinsToTree j
     let ptr = ptrs NonEmpty.!! (idx `mod` NonEmpty.length ptrs)
 
     (mbL, mbR) <- FastAvl.split ptr

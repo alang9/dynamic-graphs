@@ -5,7 +5,6 @@ module Data.MTree.Splay.Tests
 
 import           Control.Monad.Primitive              (PrimMonad (..))
 import           Control.Monad.ST                     (runST)
-import           Control.Monad.ST
 import           Data.List.NonEmpty                   (NonEmpty)
 import qualified Data.List.NonEmpty                   as NonEmpty
 import qualified Data.MTree.Splay                     as Splay

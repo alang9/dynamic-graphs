@@ -22,8 +22,6 @@ import qualified Data.MTree.FastAvl as FastAvl
 import qualified Data.MTree.EulerTour as ET
 import Data.MTree.EulerTour (EulerTourForest)
 
-import Debug.Trace
-
 data L s v = L
   { vertices :: Set v
   , allEdges :: !(Set (v, v))
@@ -60,7 +58,7 @@ insert a b levels = do --traceShow (numEdges, VM.length unLevels, Set.member (a,
         then return ()
         else do
           (thisEtf, thisEdges) <- VM.read unLevels' 0
-          m'newEtf <- ET.link a b thisEtf
+          _m'newEtf <- ET.link a b thisEtf
           -- traceShowM $ (numEdges, m'newEtf)
           -- traceShowM $ (numEdges, "test3")
           let newEdges = Map.insertWith Set.union a (Set.singleton b) $
@@ -110,7 +108,7 @@ delete a b levels = do
               else do
                 (prevEtf, prevEdges) <- VM.read unLevels (idx + 1)
                 let go' (oldPrevEdges, oldEdges) (c, d) = do
-                      ET.link c d prevEtf
+                      _ <- ET.link c d prevEtf
                       return ( Map.insertWith Set.union d (Set.singleton c) (Map.insertWith Set.union c (Set.singleton d) oldPrevEdges)
                              , Map.adjust (Set.delete c) d (Map.adjust (Set.delete d) c oldEdges)
                              )
@@ -131,8 +129,8 @@ delete a b levels = do
 
     propagateReplacement unLevels idx (c, d) = when (idx >= 0) $ do
       (etf, _) <- VM.read unLevels idx
-      ET.cut a b etf
-      ET.link c d etf
+      _ <- ET.cut a b etf
+      _ <- ET.link c d etf
       propagateReplacement unLevels (idx - 1) (c, d)
 
     findReplacement ::

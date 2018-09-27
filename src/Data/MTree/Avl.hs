@@ -10,11 +10,8 @@ import Data.Monoid ((<>))
 import Control.Monad
 import Control.Monad.Primitive
 import Data.Maybe (fromJust, catMaybes)
-import Data.Monoid ((<>))
 import Data.Primitive.MutVar
 import qualified Data.Tree as Tree
-
-import Debug.Trace
 
 data Node s a v = Node
   { parent :: Maybe (Tree s a v)
@@ -60,33 +57,29 @@ merge' l c r = do
             let newHeight = max lh rh + 1
             let newAggregate = la <> value c_ <> ra
             writeMutVar c $ c' {lower = Just c_ {leftChild = l, rightChild = r, height = newHeight, aggregate = newAggregate}}
-            modifyMutVar l $ \l' -> l' {parent = Just c}
-            modifyMutVar r $ \r' -> r' {parent = Just c}
+            writeMutVar l $ l' {parent = Just c}
+            writeMutVar r $ r' {parent = Just c}
         case (parent l', parent r') of
           (Nothing, Nothing) -> return ()
           (Just p, Nothing) -> do
             modifyMutVar p $ \p' -> p' {lower = Just (fromJust $ lower p') {rightChild = c}}
-            modifyMutVar c $ \c' -> c' {parent = Just p}
+            writeMutVar c $ c' {parent = Just p}
             rebalance p
           (Nothing, Just p) -> do
             modifyMutVar p $ \p' -> p' {lower = Just (fromJust $ lower p') {leftChild = c}}
-            modifyMutVar c $ \c' -> c' {parent = Just p}
+            writeMutVar c $ c' {parent = Just p}
             rebalance p
           (Just _, Just _) -> error "merge': illegal state"
       | lh > rh -> do
-        l' <- readMutVar l
         let Just l_ = lower l'
         merge' (rightChild l_) c r
       | rh > lh -> do
-        r' <- readMutVar r
         let Just r_ = lower r'
         merge' l c (leftChild r_)
       | otherwise -> error "merge': impossible clause"
   where
     height' Node {..} = maybe (-1) height lower
     aggregate' Node {..} = maybe mempty aggregate lower
-    parent' Nothing = return Nothing
-    parent' (Just n) = parent <$> readMutVar n
 
 deleteLeftmost :: (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> m (Maybe (Tree s a v, Tree s a v))
 deleteLeftmost t = do
@@ -195,7 +188,6 @@ split ::
   (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) =>
   Tree s a v -> m (Tree s a v, Tree s a v)
 split t = do
-  t' <- readMutVar t
   m'children <- cutChildren t
   case m'children of
     Just (l, r) -> go l r
@@ -206,8 +198,6 @@ split t = do
   where
     go l r = do
       t' <- readMutVar t
-      l' <- readMutVar l
-      r' <- readMutVar r
       case parent t' of
         Nothing -> return (l, r)
         Just p -> do
@@ -217,14 +207,14 @@ split t = do
             _ | leftChild p_ == t -> do
                   pcc <- cutChildren p
                   let Just (_, pr) = pcc
-                  swapChild p t
+                  _ <- swapChild p t
                   merge' r p pr
                   pRoot <- root p
                   go l pRoot
               | rightChild p_ == t -> do
                   pcc <- cutChildren p
                   let Just (pl, _) = pcc
-                  swapChild p t
+                  _ <- swapChild p t
                   merge' pl p l
                   pRoot <- root p
                   go pRoot r

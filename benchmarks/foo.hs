@@ -9,7 +9,7 @@ import Control.DeepSeq
 
 main :: IO ()
 main = do
-  foo <- completeBinaryTree 50000
+  foo <- completeGraph 250
   return $ rnf foo
 
 completeGraph :: Int -> IO [(Maybe Bool, Maybe Bool)]

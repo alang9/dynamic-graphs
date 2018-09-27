@@ -7,17 +7,14 @@
 
 module Action where
 
-import GHC.Generics
-import Test.Framework.TH
-import Test.Framework.Providers.QuickCheck2
 import Test.QuickCheck
 
 data ActionType = LinkCut | Toggl
 
 data Action (t :: ActionType) where
-  Cut :: !Int -> !Int -> Action LinkCut
-  Link :: !Int -> !Int -> Action LinkCut
-  Toggle :: !Int -> !Int -> Action Toggl
+  Cut :: !Int -> !Int -> Action 'LinkCut
+  Link :: !Int -> !Int -> Action 'LinkCut
+  Toggle :: !Int -> !Int -> Action 'Toggl
   Query :: !Int -> !Int -> Action a
 
 deriving instance Show (Action t)
