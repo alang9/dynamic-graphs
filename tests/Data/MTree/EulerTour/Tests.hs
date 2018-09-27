@@ -20,7 +20,7 @@ import Test.Framework.Providers.QuickCheck2
 import Test.QuickCheck
 
 import Data.MTree.EulerTour
-import qualified Data.MGraph as MGraph
+-- import qualified Data.MGraph as MGraph
 
 import Action
 import Graph

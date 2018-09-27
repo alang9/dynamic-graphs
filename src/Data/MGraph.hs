@@ -16,6 +16,8 @@ import Data.Set (Set)
 import qualified Data.Vector.Mutable as VM
 
 import qualified Data.MTree.Avl as Avl
+import qualified Data.MTree.Splay as Splay
+import qualified Data.MTree.FastAvl as FastAvl
 import qualified Data.MTree.EulerTour as ET
 import Data.MTree.EulerTour (EulerTourForest)
 
@@ -99,7 +101,7 @@ delete a b levels = do
           bSize <- ET.componentSize b etf
           let (smaller, bigger) = if aSize <= bSize then (a, b) else (b, a)
           Just sRoot <- ET.findRoot smaller etf
-          sEdges <- Avl.toList sRoot
+          sEdges <- FastAvl.toList sRoot
           (edges'', mPrevEdges) <- do
             if not (idx + 1 < VM.length unLevels)
               then return (edges', Nothing)

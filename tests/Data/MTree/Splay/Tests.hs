@@ -27,7 +27,7 @@ prop_append x y =
         tx <- Splay.fromNonEmpty $ NonEmpty.zip x $ NonEmpty.repeat ()
         ty <- Splay.fromNonEmpty $ NonEmpty.zip y $ NonEmpty.repeat ()
         tr <- Splay.append tx ty
-        Splay.freezeValues tr)
+        Splay.toList tr)
 
 tests :: Test
 tests = $(testGroupGenerator)

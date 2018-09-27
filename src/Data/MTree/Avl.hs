@@ -10,6 +10,7 @@ import Data.Monoid ((<>))
 import Control.Monad
 import Control.Monad.Primitive
 import Data.Maybe (fromJust, catMaybes)
+import Data.Monoid ((<>))
 import Data.Primitive.MutVar
 import qualified Data.Tree as Tree
 
