@@ -14,6 +14,7 @@ import Data.Primitive.MutVar
 import qualified Data.Set as Set
 import Data.Set (Set)
 import qualified Data.Vector.Mutable as VM
+import Data.Hashable (Hashable)
 
 import qualified Data.MTree.Avl as Avl
 import qualified Data.MTree.Splay as Splay
@@ -37,7 +38,8 @@ logBase2 x = finiteBitSize x - 1 - countLeadingZeros x
 fromVertices :: (PrimMonad m, s ~ PrimState m, Ord v) => [v] -> m (Levels s v)
 fromVertices xs = newMutVar =<< L (Set.fromList xs) Set.empty <$> VM.new 0
 
-insert :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Levels s v -> m ()
+-- TODO (jaspervdj): Kill Ord constraints in this module
+insert :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Levels s v -> m ()
 insert a b levels = do --traceShow (numEdges, VM.length unLevels, Set.member (a, b) allEdges) $
   L {..} <- readMutVar levels
   let newAllEdges = if a == b then allEdges else Set.insert (b, a) $ Set.insert (a, b) allEdges
@@ -66,7 +68,7 @@ insert a b levels = do --traceShow (numEdges, VM.length unLevels, Set.member (a,
           VM.write unLevels' 0 (thisEtf, newEdges)
           writeMutVar levels $ L {allEdges = newAllEdges, unLevels = unLevels', ..}
 
-connected :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Levels s v -> m (Maybe Bool)
+connected :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Levels s v -> m (Maybe Bool)
 connected a b levels = do
   L {..} <- readMutVar levels
   if VM.null unLevels
@@ -75,7 +77,7 @@ connected a b levels = do
       (etf, _) <- VM.read unLevels 0
       ET.connected a b etf
 
-delete :: forall m s v. (PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Levels s v -> m ()
+delete :: forall m s v. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Levels s v -> m ()
 delete a b levels = do
   L {..} <- readMutVar levels
   let newAllEdges = Set.delete (a, b) $ Set.delete (b, a) allEdges

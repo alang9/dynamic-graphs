@@ -1,60 +1,68 @@
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Data.MTree.EulerTour where
 
-import Control.Monad
-import Control.Monad.Primitive
-import Data.List
-import qualified Data.Map.Strict as Map
-import Data.Maybe
-import Data.Monoid
-import qualified Data.List.NonEmpty as NonEmpty
-import Data.Primitive.MutVar
-import qualified Data.Tree as Tree
-import qualified Data.MTree.Splay as Splay
-import qualified Data.MTree.FastAvl as FastAvl
+import           Control.Monad
+import           Control.Monad.Primitive
+import           Data.Hashable                 (Hashable)
+import           Data.List
+import qualified Data.List.NonEmpty            as NonEmpty
+import           Data.Maybe
+import           Data.Monoid
+import qualified Data.MTree.FastAvl            as FastAvl
+import qualified Data.MTree.Internal.HashTable as HT
+import qualified Data.Tree                     as Tree
 
-type EulerTourForest s v = MutVar s (ETF s v)
-
-newtype ETF s v = ETF {etf :: Map.Map (v, v) (FastAvl.Tree s (v, v) (Sum Int))}
+newtype EulerTourForest s v = ETF
+    { unETF :: HT.HashTable s (v, v) (FastAvl.Tree s (v, v) (Sum Int))
+    }
 
 empty :: (PrimMonad m, s ~ PrimState m) => m (EulerTourForest s v)
-empty = newMutVar $ ETF Map.empty
+empty = ETF <$> HT.new
 
 -- values in nodes must be unique
-fromTree :: (PrimMonad m, s ~ PrimState m, Ord v) => Tree.Tree v -> m (EulerTourForest s v)
+fromTree
+    :: forall v m s. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
+    => Tree.Tree v -> m (EulerTourForest s v)
 fromTree tree = do
-  m <- ETF . snd <$> go Map.empty tree
-  newMutVar m
+    etf@(ETF ht) <- empty
+    _ <- go ht tree
+    return etf
   where
-    go m0 (Tree.Node l children) = do
+    go ht (Tree.Node l children) = do
       node0 <- FastAvl.singleton (l, l) (Sum 1)
-      let m1 = Map.insert (l, l) node0 m0
-      (node1, m2) <- foldM (go' l) (node0, m1) children
-      return (node1, m2)
+      HT.insert ht (l, l) node0
+      foldM (go' ht l) node0 children
 
-    go' parent (node0, m0) tr@(Tree.Node l _) = do
-      (lnode, m1) <- go m0 tr
-      parentToL   <- FastAvl.singleton (parent, l) (Sum 0)
-      lToParent   <- FastAvl.singleton (l, parent) (Sum 0)
+    go' ht parent node0 tr@(Tree.Node l _) = do
+      lnode     <- go ht tr
+      parentToL <- FastAvl.singleton (parent, l) (Sum 0)
+      lToParent <- FastAvl.singleton (l, parent) (Sum 0)
 
       node1 <- FastAvl.concat $ node0 NonEmpty.:| [parentToL, lnode, lToParent]
-      let m2 = Map.insert (l, parent) lToParent $ Map.insert (parent, l) parentToL m1
-      return (node1, m2)
+      HT.insert ht (l, parent) lToParent
+      HT.insert ht (parent, l) parentToL
+      return node1
 
 findRoot
-    :: (PrimMonad m, s ~ PrimState m, Ord v)
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
     => v -> EulerTourForest s v -> m (Maybe (FastAvl.Tree s (v, v) (Sum Int)))
-findRoot v f = do
-  ETF m <- readMutVar f
-  sequenceA $ FastAvl.root <$> Map.lookup (v, v) m
+findRoot v (ETF ht) = do
+    mbTree <- HT.lookup ht (v, v)
+    case mbTree of
+        Nothing -> return Nothing
+        Just t  -> Just <$> FastAvl.root t
 
-cut :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> EulerTourForest s v -> m Bool
-cut a b f = do
-  ETF m <- readMutVar f
-  case (Map.lookup (a, b) m, Map.lookup (b, a) m) of
+cut
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
+    => v -> v -> EulerTourForest s v -> m Bool
+cut a b (ETF ht) = do
+  mbAb <- HT.lookup ht (a, b)
+  mbBa <- HT.lookup ht (b, a)
+  case (mbAb, mbBa) of
     _ | a == b -> return False -- Can't cut self-loops
     (Just ab, Just ba) -> do
       (part1, part2) <- FastAvl.split ab
@@ -71,7 +79,8 @@ cut a b f = do
         return (part1, part3, part4)
 
       _ <- sequenceA $ FastAvl.append <$> mbL <*> mbR
-      writeMutVar f $ ETF $ Map.delete (a, b) $ Map.delete (b, a) m
+      HT.delete ht (a, b)
+      HT.delete ht (b, a)
       return True
 
     (Nothing, _) -> return False -- No edge to cut
@@ -80,28 +89,34 @@ cut a b f = do
 -- | reroot the represented tree by shifting the euler tour.  Returns the new
 -- root.
 reroot
-    :: (PrimMonad m, s ~ PrimState m, Monoid v, Eq v)
+    :: (PrimMonad m, s ~ PrimState m, Monoid v)
     => FastAvl.Tree s a v -> m (FastAvl.Tree s a v)
 reroot t = do
     (mbPre, mbPost) <- FastAvl.split t
     FastAvl.concat $ t NonEmpty.:| catMaybes [mbPost, mbPre]
 
-hasEdge :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> EulerTourForest s v -> m Bool
-hasEdge a b f = do
-  ETF m <- readMutVar f
-  return $ isJust $ Map.lookup (a, b) m
+hasEdge
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
+    => v -> v -> EulerTourForest s v -> m Bool
+hasEdge a b (ETF ht) = isJust <$> HT.lookup ht (a, b)
 
-connected :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> EulerTourForest s v -> m (Maybe Bool)
-connected a b f = do
-  ETF m <- readMutVar f
-  case (Map.lookup (a, a) m, Map.lookup (b, b) m) of
+connected
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
+    => v -> v -> EulerTourForest s v -> m (Maybe Bool)
+connected a b (ETF ht) = do
+  mbALoop <- HT.lookup ht (a, a)
+  mbBLoop <- HT.lookup ht (b, b)
+  case (mbALoop, mbBLoop) of
     (Just aLoop, Just bLoop) -> Just <$> FastAvl.connected aLoop bLoop
-    _ -> return Nothing
+    _                        -> return Nothing
 
-link :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> EulerTourForest s v -> m Bool
-link a b f = do
-  ETF m <- readMutVar f
-  case (Map.lookup (a, a) m, Map.lookup (b, b) m) of
+link
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
+    => v -> v -> EulerTourForest s v -> m Bool
+link a b (ETF ht) = do
+  mbALoop <- HT.lookup ht (a, a)
+  mbBLoop <- HT.lookup ht (b, b)
+  case (mbALoop, mbBLoop) of
     (Just aLoop, Just bLoop) -> FastAvl.connected aLoop bLoop >>= \case
         True -> return False
         False -> do
@@ -120,45 +135,36 @@ link a b f = do
             , mbPreA
             ]
 
-          writeMutVar f $ ETF $
-            Map.insert (a, b) abNode $
-            Map.insert (b, a) baNode $
-            m
-
+          HT.insert ht (a, b) abNode
+          HT.insert ht (b, a) baNode
           return True
 
     _ -> return False
 
-{-
-
-tree1 :: Tree.Tree Int
-tree1 = Tree.unfoldTree buildNode 1
-  where
-    buildNode x = if 2*x + 1 > 10 then (x, []) else (x, [2*x, 2*x+1])
-
--}
-
 showEtf :: Show a => EulerTourForest RealWorld a -> IO ()
-showEtf f = do
-  ETF m <- readMutVar f
-  roots <- mapM FastAvl.root $ Map.elems m
+showEtf (ETF ht) = do
+  trees <- map snd <$> HT.toList ht
+  roots <- mapM FastAvl.root trees
   forM_ (nub roots) $ \root -> do
     FastAvl.print root
     putStrLn ""
 
-discreteForest :: (PrimMonad m, s ~ PrimState m, Ord v) => [v] -> m (EulerTourForest s v)
+discreteForest
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
+    => [v] -> m (EulerTourForest s v)
 discreteForest vs = do
-  m <- ETF <$> foldM go Map.empty vs
-  newMutVar m
-  where
-    go m v = do
-      node <- FastAvl.singleton (v, v) (Sum 1)
-      return $ Map.insert (v, v) node m
+    etf@(ETF ht) <- empty
+    forM_ vs $ \v -> do
+        node <- FastAvl.singleton (v, v) (Sum 1)
+        HT.insert ht (v, v) node
+    return etf
 
-componentSize :: (PrimMonad m, s ~ PrimState m, Ord v) => v -> EulerTourForest s v -> m Int
-componentSize v f = do
-  ETF m <- readMutVar f
-  case Map.lookup (v, v) m of
+componentSize
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
+    => v -> EulerTourForest s v -> m Int
+componentSize v (ETF ht) = do
+  mbTree <- HT.lookup ht (v, v)
+  case mbTree of
     Nothing -> return 0
     Just tree -> do
       root <- FastAvl.root tree
