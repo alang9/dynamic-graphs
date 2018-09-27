@@ -17,9 +17,10 @@ module Data.MTree.Splay
     , getRoot
     , freeze
     , print
+    , assertInvariants
     ) where
 
-import           Control.Monad           (foldM, void, when)
+import           Control.Monad           (foldM, when)
 import           Control.Monad.Primitive (PrimMonad (..))
 import           Data.List.NonEmpty      (NonEmpty)
 import qualified Data.List.NonEmpty      as NonEmpty
@@ -30,12 +31,12 @@ import qualified Data.Tree               as Tree
 import           Prelude                 hiding (concat, print)
 
 data Tree s a v = Tree
-    { tParent    :: {-# UNPACK #-} !(MutVar s (Tree s a v))
-    , tLeft      :: {-# UNPACK #-} !(MutVar s (Tree s a v))
-    , tRight     :: {-# UNPACK #-} !(MutVar s (Tree s a v))
-    , tLabel     :: !a
-    , tValue     :: !v
-    , tAggregate :: {-# UNPACK #-} !(MutVar s v)
+    { tParent :: {-# UNPACK #-} !(MutVar s (Tree s a v))
+    , tLeft   :: {-# UNPACK #-} !(MutVar s (Tree s a v))
+    , tRight  :: {-# UNPACK #-} !(MutVar s (Tree s a v))
+    , tLabel  :: !a
+    , tValue  :: !v
+    , tAgg    :: {-# UNPACK #-} !(MutVar s v)
     }
 
 instance Eq (Tree s a v) where
@@ -44,10 +45,10 @@ instance Eq (Tree s a v) where
 
 singleton :: PrimMonad m => a -> v -> m (Tree (PrimState m) a v)
 singleton tLabel tValue = do
-    tParent    <- MutVar.newMutVar undefined
-    tLeft      <- MutVar.newMutVar undefined
-    tRight     <- MutVar.newMutVar undefined
-    tAggregate <- MutVar.newMutVar tValue
+    tParent <- MutVar.newMutVar undefined
+    tLeft   <- MutVar.newMutVar undefined
+    tRight  <- MutVar.newMutVar undefined
+    tAgg    <- MutVar.newMutVar tValue
     let tree = Tree {..}
     MutVar.writeMutVar tParent tree
     MutVar.writeMutVar tLeft   tree
@@ -58,12 +59,12 @@ fromNonEmpty
     :: (PrimMonad m, Monoid v)
     => NonEmpty.NonEmpty (a, v) -> m (Tree (PrimState m) a v)
 fromNonEmpty ((x0, v0) NonEmpty.:| list) = do
-    root <- singleton x0 v0
-    go root list
-    return root
+    root0 <- singleton x0 v0
+    go root0 list
+    return root0
   where
-    go rightMost []            = return ()
-    go rightMost ((x, v) : xs) = do
+    go _rightMost []            = return ()
+    go rightMost  ((x, v) : xs) = do
         tree <- singleton x v
         setRight rightMost tree
         updateAggregate rightMost
@@ -82,8 +83,8 @@ append
     -> m (Tree (PrimState m) a v)
 append x y = do
     rm <- getRightMost x
-    splay rm
-    _ <- splay y
+    _  <- splay rm
+    _  <- splay y
     setRight rm y
     updateAggregate rm
     return rm
@@ -100,7 +101,7 @@ split
     => Tree (PrimState m) a v
     -> m (Maybe (Tree (PrimState m) a v), Maybe (Tree (PrimState m) a v))
 split x = do
-    splay x
+    _ <- splay x
     l <- MutVar.readMutVar (tLeft x)
     r <- MutVar.readMutVar (tRight x)
     removeParent l  -- Works even if l is x
@@ -134,7 +135,7 @@ aggregate
     :: (PrimMonad m, Monoid v)
     => Tree (PrimState m) a v
     -> m v
-aggregate x = MutVar.readMutVar (tAggregate x)
+aggregate x = MutVar.readMutVar (tAgg x)
 
 -- | For debugging/testing.
 toList
@@ -200,11 +201,6 @@ getRightMost t@Tree {..} = do
     tr <- MutVar.readMutVar tRight
     if t == tr then return t else getRightMost tr
 
-rotateLeft' p = do
-    r <- MutVar.readMutVar (tRight p)
-    rotateLeft p r
-    return r
-
 rotateLeft, rotateRight
     :: PrimMonad m
     => Tree (PrimState m) a v  -- X's parent
@@ -264,17 +260,16 @@ updateAggregate
     -> m ()
 updateAggregate t = do
     l  <- MutVar.readMutVar (tLeft t)
-    la <- if l == t then return mempty else MutVar.readMutVar (tAggregate l)
+    la <- if l == t then return mempty else MutVar.readMutVar (tAgg l)
     r  <- MutVar.readMutVar (tRight t)
-    ra <- if r == t then return mempty else MutVar.readMutVar (tAggregate r)
-    MutVar.writeMutVar (tAggregate t) $ tValue t <> la <> ra
+    ra <- if r == t then return mempty else MutVar.readMutVar (tAgg r)
+    MutVar.writeMutVar (tAgg t) $ tValue t <> la <> ra
 
 -- | For debugging/testing.
 freeze :: PrimMonad m => Tree (PrimState m) a v -> m (Tree.Tree a)
 freeze tree@Tree {..} = do
     left  <- MutVar.readMutVar tLeft
     right <- MutVar.readMutVar tRight
-    agg   <- MutVar.readMutVar tAggregate
     children  <- sequence $
         [freeze left  | left /= tree] ++
         [freeze right | right /= tree]
@@ -291,3 +286,28 @@ print = go 0
 
         right <- MutVar.readMutVar tRight
         when (right /= t) $ go (d + 1) right
+
+assertInvariants
+    :: (PrimMonad m, Monoid v, Eq v, Show v) => Tree (PrimState m) a v -> m ()
+assertInvariants t = do
+    _ <- computeAgg t t
+    return ()
+  where
+    -- TODO: Check average
+    computeAgg p x = do
+        p' <- MutVar.readMutVar (tParent x)
+        when (p /= p') $ fail "broken parent pointer"
+
+        l <- MutVar.readMutVar (tLeft x)
+        r <- MutVar.readMutVar (tRight x)
+        la <- if l == x then return mempty else computeAgg x l
+        ra <- if r == x then return mempty else computeAgg x r
+
+        let actualAgg = la <> (tValue x) <> ra
+        storedAgg <- MutVar.readMutVar (tAgg x)
+
+        when (actualAgg /= storedAgg) $ fail $
+            "error in stored aggregates: " ++ show storedAgg ++
+            ", actual: " ++ show actualAgg
+
+        return actualAgg

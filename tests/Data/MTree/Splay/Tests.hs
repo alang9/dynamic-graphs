@@ -3,6 +3,7 @@ module Data.MTree.Splay.Tests
     ( tests
     ) where
 
+import           Control.Monad.Primitive              (PrimMonad (..))
 import           Control.Monad.ST                     (runST)
 import           Control.Monad.ST
 import           Data.List.NonEmpty                   (NonEmpty)
@@ -12,22 +13,58 @@ import           Data.Semigroup                       ((<>))
 import           Test.Framework                       (Test)
 import           Test.Framework.Providers.QuickCheck2 (testProperty)
 import           Test.Framework.TH                    (testGroupGenerator)
-import           Test.QuickCheck                      (Arbitrary (..))
+import qualified Test.QuickCheck                      as QC
 
-instance Arbitrary a => Arbitrary (NonEmpty a) where
-    arbitrary = (NonEmpty.:|) <$> arbitrary <*> arbitrary
-    shrink (x NonEmpty.:| xs) = do
-        xs' <- shrink xs
-        return (x NonEmpty.:| xs')
+data Appends a v
+    = Singleton a v
+    | Append (Appends a v) (Appends a v)
+    deriving (Show)
 
-prop_append :: NonEmpty Int -> NonEmpty Int -> Bool
-prop_append x y =
-    NonEmpty.toList (x <> y) ==
-    runST (do
-        tx <- Splay.fromNonEmpty $ NonEmpty.zip x $ NonEmpty.repeat ()
-        ty <- Splay.fromNonEmpty $ NonEmpty.zip y $ NonEmpty.repeat ()
-        tr <- Splay.append tx ty
-        Splay.toList tr)
+arbitraryAppends
+    :: (QC.Arbitrary a, QC.Arbitrary v) => Int -> QC.Gen (Appends a v)
+arbitraryAppends n
+    | n <= 0    = Singleton <$> QC.arbitrary <*> QC.arbitrary
+    | otherwise = QC.oneof
+        [ Singleton <$> QC.arbitrary <*> QC.arbitrary
+        , Append <$> arbitraryAppends (n - 1) <*> arbitraryAppends (n - 1)
+        ]
+
+instance (QC.Arbitrary a, QC.Arbitrary v) => QC.Arbitrary (Appends a v) where
+    arbitrary = QC.sized arbitraryAppends
+
+    shrink (Singleton _ _) = []
+    shrink (Append l r)  =
+        [l, r] ++
+        [Append l' r | l' <- QC.shrink l] ++
+        [Append l r' | r' <- QC.shrink r]
+
+-- | Returns pointers to all nodes.
+appendsToTree
+    :: (PrimMonad m, Monoid v, Show a)
+    => Appends a v
+    -> m (Splay.Tree (PrimState m) a v, NonEmpty (Splay.Tree (PrimState m) a v))
+appendsToTree = go
+  where
+    go (Singleton a v) = do
+        s <- Splay.singleton a v
+        return (s, s NonEmpty.:| [])
+    go (Append jl jr)  = do
+        (l, lps) <- go jl
+        (r, rps) <- go jr
+        rt       <- Splay.append l r
+        return (rt, lps <> rps)
+
+appendsToList :: Appends a v -> [a]
+appendsToList (Singleton a _) = [a]
+appendsToList (Append l r)    = appendsToList l ++ appendsToList r
+
+prop_append :: Appends Int () -> Bool
+prop_append appends = runST $ do
+    (t, _) <- appendsToTree appends
+    Splay.assertInvariants t
+
+    l <- Splay.toList t
+    return $ l == appendsToList appends
 
 tests :: Test
 tests = $(testGroupGenerator)
