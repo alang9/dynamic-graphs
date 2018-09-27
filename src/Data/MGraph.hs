@@ -8,8 +8,8 @@ module Data.MGraph where
 import Control.Monad
 import Control.Monad.Primitive
 import Data.Bits
-import qualified Data.Map as Map
-import Data.Map (Map)
+import qualified Data.Map.Strict as Map
+import Data.Map.Strict (Map)
 import Data.Primitive.MutVar
 import qualified Data.Set as Set
 import Data.Set (Set)

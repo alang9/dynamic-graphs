@@ -7,7 +7,7 @@ module Data.MTree.EulerTour where
 import Control.Monad
 import Control.Monad.Primitive
 import Data.List
-import qualified Data.Map as Map
+import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.Monoid
 import qualified Data.List.NonEmpty as NonEmpty
