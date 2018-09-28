@@ -4,7 +4,6 @@ module Data.MTree.Splay
     ( Tree
 
     , singleton
-    , fromNonEmpty
     , append
     , concat
     , split
@@ -55,21 +54,6 @@ singleton tLabel tValue = do
     MutVar.writeMutVar tRight  tree
     return tree
 
-fromNonEmpty
-    :: (PrimMonad m, Monoid v)
-    => NonEmpty.NonEmpty (a, v) -> m (Tree (PrimState m) a v)
-fromNonEmpty ((x0, v0) NonEmpty.:| list) = do
-    root0 <- singleton x0 v0
-    go root0 list
-    return root0
-  where
-    go _rightMost []            = return ()
-    go rightMost  ((x, v) : xs) = do
-        tree <- singleton x v
-        setRight rightMost tree
-        updateAggregate rightMost
-        go tree xs
-
 getRoot :: PrimMonad m => Tree (PrimState m) a v -> m (Tree (PrimState m) a v)
 getRoot tree@Tree {..} = do
     parent <- MutVar.readMutVar tParent
@@ -84,7 +68,7 @@ append
 append x y = do
     rm <- getRightMost x
     _  <- splay rm
-    _  <- splay y
+    -- _  <- splay y
     setRight rm y
     updateAggregate rm
     return rm
@@ -166,8 +150,6 @@ splay x0 = go x0 x0
                 then do
                     -- ZIG
                     if lp == x then rotateRight p x else rotateLeft p x
-                    updateAggregate p
-                    updateAggregate x
                 else do
                     lgp <- MutVar.readMutVar (tLeft gp)
                     if  | lp == x && lgp == p -> do
@@ -187,10 +169,6 @@ splay x0 = go x0 x0
                             rotateLeft p x
                             rotateRight gp x
 
-                    updateAggregate gp
-                    updateAggregate p
-                    updateAggregate x
-
             go gp x
 
 getRightMost
@@ -202,22 +180,28 @@ getRightMost t@Tree {..} = do
     if t == tr then return t else getRightMost tr
 
 rotateLeft, rotateRight
-    :: PrimMonad m
+    :: (PrimMonad m, Monoid v)
     => Tree (PrimState m) a v  -- X's parent
     -> Tree (PrimState m) a v  -- X
     -> m ()
 rotateLeft p x = do
-    b <- MutVar.readMutVar (tLeft x)
+    pa <- MutVar.readMutVar (tAgg p)
+    b  <- MutVar.readMutVar (tLeft x)
     if b == x then removeRight p else setRight p b
     gp <- MutVar.readMutVar (tParent p)
     if gp == p then removeParent x else replace gp p x
     setLeft x p
+    MutVar.writeMutVar (tAgg x) pa
+    updateAggregate p
 rotateRight p x = do
-    b <- MutVar.readMutVar (tRight x)
+    pa <- MutVar.readMutVar (tAgg p)
+    b  <- MutVar.readMutVar (tRight x)
     if b == x then removeLeft p else setLeft p b
     gp <- MutVar.readMutVar (tParent p)
     if gp == p then removeParent x else replace gp p x
     setRight x p
+    MutVar.writeMutVar (tAgg x) pa
+    updateAggregate p
 
 setLeft, setRight
     :: PrimMonad m
@@ -263,7 +247,8 @@ updateAggregate t = do
     la <- if l == t then return mempty else MutVar.readMutVar (tAgg l)
     r  <- MutVar.readMutVar (tRight t)
     ra <- if r == t then return mempty else MutVar.readMutVar (tAgg r)
-    MutVar.writeMutVar (tAgg t) $ tValue t <> la <> ra
+    let !agg = la <> tValue t <> ra
+    MutVar.writeMutVar (tAgg t) agg
 
 -- | For debugging/testing.
 freeze :: PrimMonad m => Tree (PrimState m) a v -> m (Tree.Tree a)

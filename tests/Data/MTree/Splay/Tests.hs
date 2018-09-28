@@ -7,6 +7,7 @@ import           Control.Monad.Primitive              (PrimMonad (..))
 import           Control.Monad.ST                     (runST)
 import           Data.List.NonEmpty                   (NonEmpty)
 import qualified Data.List.NonEmpty                   as NonEmpty
+import           Data.Monoid                          (Sum (..))
 import qualified Data.MTree.Splay                     as Splay
 import           Data.Semigroup                       ((<>))
 import           Test.Framework                       (Test)
@@ -57,7 +58,7 @@ appendsToList :: Appends a v -> [a]
 appendsToList (Singleton a _) = [a]
 appendsToList (Append l r)    = appendsToList l ++ appendsToList r
 
-prop_append :: Appends Int () -> Bool
+prop_append :: Appends Int (Sum Int) -> Bool
 prop_append appends = runST $ do
     (t, _) <- appendsToTree appends
     Splay.assertInvariants t

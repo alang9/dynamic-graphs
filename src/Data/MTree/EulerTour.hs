@@ -12,12 +12,12 @@ import           Data.List
 import qualified Data.List.NonEmpty            as NonEmpty
 import           Data.Maybe
 import           Data.Monoid
-import qualified Data.MTree.FastAvl            as FastAvl
 import qualified Data.MTree.Internal.HashTable as HT
+import qualified Data.MTree.Splay              as Splay
 import qualified Data.Tree                     as Tree
 
 newtype EulerTourForest s v = ETF
-    { unETF :: HT.HashTable s (v, v) (FastAvl.Tree s (v, v) (Sum Int))
+    { unETF :: HT.HashTable s (v, v) (Splay.Tree s (v, v) (Sum Int))
     }
 
 empty :: (PrimMonad m, s ~ PrimState m) => m (EulerTourForest s v)
@@ -33,28 +33,28 @@ fromTree tree = do
     return etf
   where
     go ht (Tree.Node l children) = do
-      node0 <- FastAvl.singleton (l, l) (Sum 1)
+      node0 <- Splay.singleton (l, l) (Sum 1)
       HT.insert ht (l, l) node0
       foldM (go' ht l) node0 children
 
     go' ht parent node0 tr@(Tree.Node l _) = do
       lnode     <- go ht tr
-      parentToL <- FastAvl.singleton (parent, l) (Sum 0)
-      lToParent <- FastAvl.singleton (l, parent) (Sum 0)
+      parentToL <- Splay.singleton (parent, l) (Sum 0)
+      lToParent <- Splay.singleton (l, parent) (Sum 0)
 
-      node1 <- FastAvl.concat $ node0 NonEmpty.:| [parentToL, lnode, lToParent]
+      node1 <- Splay.concat $ node0 NonEmpty.:| [parentToL, lnode, lToParent]
       HT.insert ht (l, parent) lToParent
       HT.insert ht (parent, l) parentToL
       return node1
 
 findRoot
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => v -> EulerTourForest s v -> m (Maybe (FastAvl.Tree s (v, v) (Sum Int)))
+    => v -> EulerTourForest s v -> m (Maybe (Splay.Tree s (v, v) (Sum Int)))
 findRoot v (ETF ht) = do
     mbTree <- HT.lookup ht (v, v)
     case mbTree of
         Nothing -> return Nothing
-        Just t  -> Just <$> FastAvl.root t
+        Just t  -> Just <$> Splay.root t
 
 cut
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
@@ -65,20 +65,20 @@ cut a b (ETF ht) = do
   case (mbAb, mbBa) of
     _ | a == b -> return False -- Can't cut self-loops
     (Just ab, Just ba) -> do
-      (part1, part2) <- FastAvl.split ab
+      (part1, part2) <- Splay.split ab
 
       baIsInPart1 <- case part1 of
-        Just p -> FastAvl.connected p ba
+        Just p -> Splay.connected p ba
         _      -> return False
 
       (mbL, _, mbR) <- if baIsInPart1 then do
-        (part3, part4) <- FastAvl.split ba
+        (part3, part4) <- Splay.split ba
         return (part3, part4, part2)
       else do
-        (part3, part4) <- FastAvl.split ba
+        (part3, part4) <- Splay.split ba
         return (part1, part3, part4)
 
-      _ <- sequenceA $ FastAvl.append <$> mbL <*> mbR
+      _ <- sequenceA $ Splay.append <$> mbL <*> mbR
       HT.delete ht (a, b)
       HT.delete ht (b, a)
       return True
@@ -90,10 +90,10 @@ cut a b (ETF ht) = do
 -- root.
 reroot
     :: (PrimMonad m, s ~ PrimState m, Monoid v)
-    => FastAvl.Tree s a v -> m (FastAvl.Tree s a v)
+    => Splay.Tree s a v -> m (Splay.Tree s a v)
 reroot t = do
-    (mbPre, mbPost) <- FastAvl.split t
-    FastAvl.concat $ t NonEmpty.:| catMaybes [mbPost, mbPre]
+    (mbPre, mbPost) <- Splay.split t
+    Splay.concat $ t NonEmpty.:| catMaybes [mbPost, mbPre]
 
 hasEdge
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
@@ -107,7 +107,7 @@ connected a b (ETF ht) = do
   mbALoop <- HT.lookup ht (a, a)
   mbBLoop <- HT.lookup ht (b, b)
   case (mbALoop, mbBLoop) of
-    (Just aLoop, Just bLoop) -> Just <$> FastAvl.connected aLoop bLoop
+    (Just aLoop, Just bLoop) -> Just <$> Splay.connected aLoop bLoop
     _                        -> return Nothing
 
 link
@@ -117,16 +117,16 @@ link a b (ETF ht) = do
   mbALoop <- HT.lookup ht (a, a)
   mbBLoop <- HT.lookup ht (b, b)
   case (mbALoop, mbBLoop) of
-    (Just aLoop, Just bLoop) -> FastAvl.connected aLoop bLoop >>= \case
+    (Just aLoop, Just bLoop) -> Splay.connected aLoop bLoop >>= \case
         True -> return False
         False -> do
 
           bLoop1            <- reroot bLoop
-          abNode            <- FastAvl.singleton (a, b) (Sum 0)
-          baNode            <- FastAvl.singleton (b, a) (Sum 0)
-          (mbPreA, mbPostA) <- FastAvl.split aLoop
+          abNode            <- Splay.singleton (a, b) (Sum 0)
+          baNode            <- Splay.singleton (b, a) (Sum 0)
+          (mbPreA, mbPostA) <- Splay.split aLoop
 
-          _ <- FastAvl.concat $
+          _ <- Splay.concat $
             aLoop NonEmpty.:| catMaybes
             [ Just abNode
             , Just bLoop1
@@ -144,9 +144,9 @@ link a b (ETF ht) = do
 showEtf :: Show a => EulerTourForest RealWorld a -> IO ()
 showEtf (ETF ht) = do
   trees <- map snd <$> HT.toList ht
-  roots <- mapM FastAvl.root trees
+  roots <- mapM Splay.root trees
   forM_ (nub roots) $ \root -> do
-    FastAvl.print root
+    Splay.print root
     putStrLn ""
 
 discreteForest
@@ -155,7 +155,7 @@ discreteForest
 discreteForest vs = do
     etf@(ETF ht) <- empty
     forM_ vs $ \v -> do
-        node <- FastAvl.singleton (v, v) (Sum 1)
+        node <- Splay.singleton (v, v) (Sum 1)
         HT.insert ht (v, v) node
     return etf
 
@@ -167,5 +167,5 @@ componentSize v (ETF ht) = do
   case mbTree of
     Nothing -> return 0
     Just tree -> do
-      root <- FastAvl.root tree
-      getSum <$> FastAvl.aggregate root
+      root <- Splay.root tree
+      getSum <$> Splay.aggregate root

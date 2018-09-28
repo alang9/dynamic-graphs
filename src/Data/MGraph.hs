@@ -101,7 +101,7 @@ delete a b levels = do
           bSize <- ET.componentSize b etf
           let (smaller, bigger) = if aSize <= bSize then (a, b) else (b, a)
           Just sRoot <- ET.findRoot smaller etf
-          sEdges <- FastAvl.toList sRoot
+          sEdges <- Splay.toList sRoot
           (edges'', mPrevEdges) <- do
             if not (idx + 1 < VM.length unLevels)
               then return (edges', Nothing)
