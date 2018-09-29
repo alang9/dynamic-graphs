@@ -82,8 +82,8 @@ discreteForest vs = do
 
 findRoot
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => v -> Forest s v -> m (Maybe (Splay.Tree s (v, v) (Sum Int)))
-findRoot v (ETF ht) = do
+    => Forest s v -> v -> m (Maybe (Splay.Tree s (v, v) (Sum Int)))
+findRoot (ETF ht) v = do
     mbTree <- HT.lookup ht (v, v)
     case mbTree of
         Nothing -> return Nothing
@@ -91,8 +91,8 @@ findRoot v (ETF ht) = do
 
 cut
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => v -> v -> Forest s v -> m Bool
-cut a b (ETF ht) = do
+    => Forest s v -> v -> v -> m Bool
+cut (ETF ht) a b = do
   mbAb <- HT.lookup ht (a, b)
   mbBa <- HT.lookup ht (b, a)
   case (mbAb, mbBa) of
@@ -130,13 +130,13 @@ reroot t = do
 
 hasEdge
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => v -> v -> Forest s v -> m Bool
-hasEdge a b (ETF ht) = isJust <$> HT.lookup ht (a, b)
+    => Forest s v -> v -> v -> m Bool
+hasEdge (ETF ht) a b = isJust <$> HT.lookup ht (a, b)
 
 connected
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => v -> v -> Forest s v -> m (Maybe Bool)
-connected a b (ETF ht) = do
+    => Forest s v -> v -> v -> m (Maybe Bool)
+connected (ETF ht) a b = do
   mbALoop <- HT.lookup ht (a, a)
   mbBLoop <- HT.lookup ht (b, b)
   case (mbALoop, mbBLoop) of
@@ -145,8 +145,8 @@ connected a b (ETF ht) = do
 
 link
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => v -> v -> Forest s v -> m Bool
-link a b (ETF ht) = do
+    => Forest s v -> v -> v -> m Bool
+link (ETF ht) a b = do
   mbALoop <- HT.lookup ht (a, a)
   mbBLoop <- HT.lookup ht (b, b)
   case (mbALoop, mbBLoop) of
@@ -184,8 +184,8 @@ print (ETF ht) = do
 
 componentSize
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => v -> Forest s v -> m Int
-componentSize v (ETF ht) = do
+    => Forest s v -> v -> m Int
+componentSize (ETF ht) v = do
   mbTree <- HT.lookup ht (v, v)
   case mbTree of
     Nothing -> return 0

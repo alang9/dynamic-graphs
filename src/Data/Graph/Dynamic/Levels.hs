@@ -51,8 +51,8 @@ fromVertices :: (PrimMonad m, s ~ PrimState m, Ord v) => [v] -> m (Graph s v)
 fromVertices xs = newMutVar =<< L (Set.fromList xs) Set.empty <$> VM.new 0
 
 -- TODO (jaspervdj): Kill Ord constraints in this module
-link :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Graph s v -> m ()
-link a b levels = do --traceShow (numEdges, VM.length unLevels, Set.member (a, b) allEdges) $
+link :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => Graph s v -> v -> v -> m ()
+link levels a b = do --traceShow (numEdges, VM.length unLevels, Set.member (a, b) allEdges) $
   L {..} <- readMutVar levels
   let newAllEdges = if a == b then allEdges else Set.insert (b, a) $ Set.insert (a, b) allEdges
       numEdges = Set.size newAllEdges `div` 2
@@ -72,7 +72,7 @@ link a b levels = do --traceShow (numEdges, VM.length unLevels, Set.member (a, b
         then return ()
         else do
           (thisEtf, thisEdges) <- VM.read unLevels' 0
-          _m'newEtf <- ET.link a b thisEtf
+          _m'newEtf <- ET.link thisEtf a b
           -- traceShowM $ (numEdges, m'newEtf)
           -- traceShowM $ (numEdges, "test3")
           let newEdges = Map.insertWith Set.union a (Set.singleton b) $
@@ -80,22 +80,22 @@ link a b levels = do --traceShow (numEdges, VM.length unLevels, Set.member (a, b
           VM.write unLevels' 0 (thisEtf, newEdges)
           writeMutVar levels $ L {allEdges = newAllEdges, unLevels = unLevels', ..}
 
-connected :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Graph s v -> m (Maybe Bool)
-connected a b levels = do
+connected :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => Graph s v -> v -> v -> m (Maybe Bool)
+connected levels a b = do
   L {..} <- readMutVar levels
   if VM.null unLevels
     then return $ Just $ a == b
     else do
       (etf, _) <- VM.read unLevels 0
-      ET.connected a b etf
+      ET.connected etf a b
 
-hasEdge :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Graph s v -> m Bool
-hasEdge a b levels = do
+hasEdge :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => Graph s v -> v -> v -> m Bool
+hasEdge levels a b = do
   L {..} <- readMutVar levels
   return $ Set.member (a, b) allEdges
 
-cut :: forall m s v. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Graph s v -> m ()
-cut a b levels = do
+cut :: forall m s v. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => Graph s v -> v -> v -> m ()
+cut levels a b = do
   L {..} <- readMutVar levels
   let newAllEdges = Set.delete (a, b) $ Set.delete (b, a) allEdges
   -- | a == b = return Graph {..}
@@ -109,17 +109,17 @@ cut a b levels = do
     go unLevels idx = do
       -- traceShowM ("go", idx)
       (etf, edges) <- VM.read unLevels idx
-      cutResult <- ET.cut a b etf
+      cutResult <- ET.cut etf a b
       let edges' = Map.adjust (Set.delete b) a $ Map.adjust (Set.delete a) b edges
       case cutResult of
         False -> do
           VM.write unLevels idx (etf, edges')
           when (idx > 0) $ go unLevels (idx - 1)
         True -> do
-          aSize <- ET.componentSize a etf
-          bSize <- ET.componentSize b etf
+          aSize <- ET.componentSize etf a
+          bSize <- ET.componentSize etf b
           let (smaller, bigger) = if aSize <= bSize then (a, b) else (b, a)
-          Just sRoot <- ET.findRoot smaller etf
+          Just sRoot <- ET.findRoot etf smaller
           sEdges <- Splay.toList sRoot
           (edges'', mPrevEdges) <- do
             if not (idx + 1 < VM.length unLevels)
@@ -127,7 +127,7 @@ cut a b levels = do
               else do
                 (prevEtf, prevEdges) <- VM.read unLevels (idx + 1)
                 let go' (oldPrevEdges, oldEdges) (c, d) = do
-                      _ <- ET.link c d prevEtf
+                      _ <- ET.link prevEtf c d
                       return ( Map.insertWith Set.union d (Set.singleton c) (Map.insertWith Set.union c (Set.singleton d) oldPrevEdges)
                              , Map.adjust (Set.delete c) d (Map.adjust (Set.delete d) c oldEdges)
                              )
@@ -148,8 +148,8 @@ cut a b levels = do
 
     propagateReplacement unLevels idx (c, d) = when (idx >= 0) $ do
       (etf, _) <- VM.read unLevels idx
-      _ <- ET.cut a b etf
-      _ <- ET.link c d etf
+      _ <- ET.cut etf a b
+      _ <- ET.link etf c d
       propagateReplacement unLevels (idx - 1) (c, d)
 
     findReplacement ::
@@ -160,10 +160,10 @@ cut a b levels = do
     findReplacement f remainingEdges m'prevEdges other (x:xs) = case Set.minView xEdges of
       Nothing -> findReplacement f remainingEdges m'prevEdges other xs
       Just (c, _) -> do
-        cConnected <- ET.connected c other f
+        cConnected <- ET.connected f c other
         if maybe err id cConnected
           then do
-            True <- ET.link c x f
+            True <- ET.link f c x
             return (Just (c, x), remainingEdges, m'prevEdges)
           else
             findReplacement f

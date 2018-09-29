@@ -51,21 +51,21 @@ runSlowForestAction sf@Graph {..} (Query x y) = (sf, Just (Set.member y' $ compo
 
 runForestAction ::
   Int -> ET.Forest s Int -> [Bool] -> Action t -> ST s [Bool]
-runForestAction n etf xs (Cut x y) = ET.cut x' y' etf >> return xs
+runForestAction n etf xs (Cut x y) = ET.cut etf x' y' >> return xs
   where
     x' = mod x n
     y' = mod y n
-runForestAction n etf xs (Link x y) = ET.link x' y' etf >> return xs
+runForestAction n etf xs (Link x y) = ET.link etf x' y' >> return xs
   where
     x' = mod x n
     y' = mod y n
-runForestAction n etf xs (Toggle x y) = ET.hasEdge x' y' etf >>= \case
-  True -> ET.cut x' y' etf >> return xs
-  False -> ET.link x' y' etf >> return xs
+runForestAction n etf xs (Toggle x y) = ET.hasEdge etf x' y' >>= \case
+  True -> ET.cut etf x' y' >> return xs
+  False -> ET.link etf x' y' >> return xs
   where
     x' = mod x n
     y' = mod y n
-runForestAction n etf xs (Query x y) = ET.connected x' y' etf >>= \case
+runForestAction n etf xs (Query x y) = ET.connected etf x' y' >>= \case
   Nothing -> return xs
   Just q -> return (q:xs)
   where
