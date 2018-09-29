@@ -1,7 +1,9 @@
--- | This module implements the "Levels" datastructured as introduced in
+-- | This module implements full dynamic grah connectivity.
+--
+-- It is based on:
 -- /Poly-logarithmic deterministic fully-dynamic algorithms for connectivity,
 -- minimum spanning tree, 2-edge, and biconnectivity/ by /Jacob Holm, Kristian
--- de Lichtenberg and Mikkel Thorup/ in 1998.
+-- de Lichtenberg and Mikkel Thorup/ (1998).
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE RecordWildCards     #-}
@@ -25,21 +27,19 @@ module Data.Graph.Dynamic.Levels
 import           Control.Monad
 import           Control.Monad.Primitive
 import           Data.Bits
-import           Data.Hashable                       (Hashable)
-import           Data.Map.Strict                     (Map)
-import qualified Data.Map.Strict                     as Map
+import           Data.Hashable                     (Hashable)
+import qualified Data.HashMap.Strict               as HMS
+import qualified Data.HashSet                      as HS
 import           Data.Primitive.MutVar
-import           Data.Set                            (Set)
-import qualified Data.Set                            as Set
-import qualified Data.Vector.Mutable                 as VM
+import qualified Data.Vector.Mutable               as VM
 
-import qualified Data.Graph.Dynamic.EulerTour        as ET
-import qualified Data.Graph.Dynamic.Internal.Splay   as Splay
+import qualified Data.Graph.Dynamic.EulerTour      as ET
+import qualified Data.Graph.Dynamic.Internal.Splay as Splay
 
 data L s v = L
-  { vertices :: Set v
-  , allEdges :: !(Set (v, v))
-  , unLevels :: !(VM.MVector s (ET.Forest s v, Map v (Set v)))
+  { vertices :: HS.HashSet v
+  , allEdges :: !(HS.HashSet (v, v))
+  , unLevels :: !(VM.MVector s (ET.Forest s v, HMS.HashMap v (HS.HashSet v)))
   }
 
 type Graph s v = MutVar s (L s v)
@@ -47,16 +47,17 @@ type Graph s v = MutVar s (L s v)
 logBase2 :: Int -> Int
 logBase2 x = finiteBitSize x - 1 - countLeadingZeros x
 
-fromVertices :: (PrimMonad m, s ~ PrimState m, Ord v) => [v] -> m (Graph s v)
-fromVertices xs = newMutVar =<< L (Set.fromList xs) Set.empty <$> VM.new 0
+fromVertices
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => [v] -> m (Graph s v)
+fromVertices xs = newMutVar =<< L (HS.fromList xs) HS.empty <$> VM.new 0
 
 -- TODO (jaspervdj): Kill Ord constraints in this module
-link :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => Graph s v -> v -> v -> m ()
-link levels a b = do --traceShow (numEdges, VM.length unLevels, Set.member (a, b) allEdges) $
+link :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m ()
+link levels a b = do --traceShow (numEdges, VM.length unLevels, HS.member (a, b) allEdges) $
   L {..} <- readMutVar levels
-  let newAllEdges = if a == b then allEdges else Set.insert (b, a) $ Set.insert (a, b) allEdges
-      numEdges = Set.size newAllEdges `div` 2
-  if Set.member (a, b) allEdges
+  let newAllEdges = if a == b then allEdges else HS.insert (b, a) $ HS.insert (a, b) allEdges
+      numEdges = HS.size newAllEdges `div` 2
+  if HS.member (a, b) allEdges
     then return ()
     else do
       unLevels' <- do
@@ -64,8 +65,8 @@ link levels a b = do --traceShow (numEdges, VM.length unLevels, Set.member (a, b
         newUnLevels <- VM.take (logBase2 numEdges + 1) <$>
           VM.grow unLevels (max 0 $ logBase2 numEdges - oldNumLevels + 1)
         forM_ [oldNumLevels .. logBase2 numEdges] $ \levelIdx -> do
-          df <- ET.discreteForest $ Set.toList vertices
-          VM.write newUnLevels levelIdx (df, Map.empty)
+          df <- ET.discreteForest $ HS.toList vertices
+          VM.write newUnLevels levelIdx (df, HMS.empty)
         return newUnLevels
       -- traceShowM (VM.null levels')
       if VM.null unLevels'
@@ -75,12 +76,12 @@ link levels a b = do --traceShow (numEdges, VM.length unLevels, Set.member (a, b
           _m'newEtf <- ET.link thisEtf a b
           -- traceShowM $ (numEdges, m'newEtf)
           -- traceShowM $ (numEdges, "test3")
-          let newEdges = Map.insertWith Set.union a (Set.singleton b) $
-                Map.insertWith Set.union b (Set.singleton a) thisEdges
+          let newEdges = HMS.insertWith HS.union a (HS.singleton b) $
+                HMS.insertWith HS.union b (HS.singleton a) thisEdges
           VM.write unLevels' 0 (thisEtf, newEdges)
           writeMutVar levels $ L {allEdges = newAllEdges, unLevels = unLevels', ..}
 
-connected :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => Graph s v -> v -> v -> m (Maybe Bool)
+connected :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m (Maybe Bool)
 connected levels a b = do
   L {..} <- readMutVar levels
   if VM.null unLevels
@@ -89,15 +90,15 @@ connected levels a b = do
       (etf, _) <- VM.read unLevels 0
       ET.connected etf a b
 
-hasEdge :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => Graph s v -> v -> v -> m Bool
+hasEdge :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m Bool
 hasEdge levels a b = do
   L {..} <- readMutVar levels
-  return $ Set.member (a, b) allEdges
+  return $ HS.member (a, b) allEdges
 
-cut :: forall m s v. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => Graph s v -> v -> v -> m ()
+cut :: forall m s v. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m ()
 cut levels a b = do
   L {..} <- readMutVar levels
-  let newAllEdges = Set.delete (a, b) $ Set.delete (b, a) allEdges
+  let newAllEdges = HS.delete (a, b) $ HS.delete (b, a) allEdges
   -- | a == b = return Graph {..}
   if VM.length unLevels == 0
     then return ()
@@ -105,12 +106,12 @@ cut levels a b = do
       go unLevels (VM.length unLevels-1)
       writeMutVar levels L {allEdges = newAllEdges, ..}
   where
-    go :: VM.MVector s (ET.Forest s v, Map v (Set v)) -> Int -> m ()
+    go :: VM.MVector s (ET.Forest s v, HMS.HashMap v (HS.HashSet v)) -> Int -> m ()
     go unLevels idx = do
       -- traceShowM ("go", idx)
       (etf, edges) <- VM.read unLevels idx
       cutResult <- ET.cut etf a b
-      let edges' = Map.adjust (Set.delete b) a $ Map.adjust (Set.delete a) b edges
+      let edges' = HMS.adjust (HS.delete b) a $ HMS.adjust (HS.delete a) b edges
       case cutResult of
         False -> do
           VM.write unLevels idx (etf, edges')
@@ -128,8 +129,8 @@ cut levels a b = do
                 (prevEtf, prevEdges) <- VM.read unLevels (idx + 1)
                 let go' (oldPrevEdges, oldEdges) (c, d) = do
                       _ <- ET.link prevEtf c d
-                      return ( Map.insertWith Set.union d (Set.singleton c) (Map.insertWith Set.union c (Set.singleton d) oldPrevEdges)
-                             , Map.adjust (Set.delete c) d (Map.adjust (Set.delete d) c oldEdges)
+                      return ( HMS.insertWith HS.union d (HS.singleton c) (HMS.insertWith HS.union c (HS.singleton d) oldPrevEdges)
+                             , HMS.adjust (HS.delete c) d (HMS.adjust (HS.delete d) c oldEdges)
                              )
                 (newPrevEdges, newEdges) <- foldM go' (prevEdges, edges') sEdges
                 VM.write unLevels (idx + 1) (prevEtf, newPrevEdges)
@@ -153,13 +154,14 @@ cut levels a b = do
       propagateReplacement unLevels (idx - 1) (c, d)
 
     findReplacement ::
-      ET.Forest s v -> Map v (Set v) -> Maybe (Map v (Set v)) ->
+      ET.Forest s v -> HMS.HashMap v (HS.HashSet v) -> Maybe (HMS.HashMap v (HS.HashSet v)) ->
       v -> [v] ->
-      m (Maybe (v, v), Map v (Set v), Maybe (Map v (Set v)))
+      m (Maybe (v, v), HMS.HashMap v (HS.HashSet v), Maybe (HMS.HashMap v (HS.HashSet v)))
     findReplacement _ remainingEdges m'prevEdges _ [] = return (Nothing, remainingEdges, m'prevEdges)
-    findReplacement f remainingEdges m'prevEdges other (x:xs) = case Set.minView xEdges of
-      Nothing -> findReplacement f remainingEdges m'prevEdges other xs
-      Just (c, _) -> do
+    findReplacement f remainingEdges m'prevEdges other (x:xs) = case HS.toList xEdges of
+      -- HS.toList produces a lazy list so this is all okay.
+      [] -> findReplacement f remainingEdges m'prevEdges other xs
+      (c : _) -> do
         cConnected <- ET.connected f c other
         if maybe err id cConnected
           then do
@@ -167,10 +169,10 @@ cut levels a b = do
             return (Just (c, x), remainingEdges, m'prevEdges)
           else
             findReplacement f
-              (Map.adjust (Set.delete c) x $ Map.adjust (Set.delete x) c $ remainingEdges)
-              (Map.insertWith Set.union x (Set.singleton c) . Map.insertWith Set.union c (Set.singleton x) <$> m'prevEdges)
+              (HMS.adjust (HS.delete c) x $ HMS.adjust (HS.delete x) c $ remainingEdges)
+              (HMS.insertWith HS.union x (HS.singleton c) . HMS.insertWith HS.union c (HS.singleton x) <$> m'prevEdges)
               other (x:xs)
       where
-        xEdges = maybe Set.empty id $ Map.lookup x remainingEdges
+        xEdges = maybe HS.empty id $ HMS.lookup x remainingEdges
         err = error "delete.findReplacement: invalid state"
 

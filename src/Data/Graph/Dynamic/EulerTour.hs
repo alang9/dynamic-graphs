@@ -1,3 +1,9 @@
+-- | This module provides dynamic connectivity for an acyclic graph (i.e. a
+-- forest).
+--
+-- It is based on:
+-- /Finding biconnected components and computing tree functions in logarithmic
+-- parallel time/ by /Robert E. Tarjan and Uzi Vishki/ (1984).
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE RecordWildCards     #-}

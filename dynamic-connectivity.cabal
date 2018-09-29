@@ -30,6 +30,7 @@ library
     base >=4.10 && <4.13,
     primitive,
     containers,
+    unordered-containers,
     hashtables,
     hashable,
     vector
