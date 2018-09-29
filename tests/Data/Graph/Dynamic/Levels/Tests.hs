@@ -49,22 +49,21 @@ runSlowGraphAction sf@Graph {..} (Query x y) = (sf, Just (Set.member y' $ compon
 runGraphAction ::
   Int -> Levels.Graph s Int -> [Bool] -> Action t -> ST s [Bool]
 runGraphAction n levels xs (Cut x y) = do
-    Levels.delete x' y' levels
+    Levels.cut x' y' levels
     return xs
   where
     x' = mod x n
     y' = mod y n
 runGraphAction n levels xs (Link x y) = do
-  Levels.insert x' y' levels
+  Levels.link x' y' levels
   return xs
   where
     x' = mod x n
     y' = mod y n
 runGraphAction n levels xs (Toggle x y) = do
-  Levels.L {..} <- readMutVar levels
-  if Set.member (x', y') allEdges
-    then Levels.delete x' y' levels
-    else Levels.insert x' y' levels
+  Levels.hasEdge x' y' levels >>= \case
+    True  -> Levels.cut x' y' levels
+    False -> Levels.link x' y' levels
   return xs
   where
     x' = mod x n

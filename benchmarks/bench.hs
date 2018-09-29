@@ -18,10 +18,10 @@ main = defaultMainWith defaultConfig
 completeGraph :: Int -> IO [(Maybe Bool, Maybe Bool)]
 completeGraph n = do
   levels <- Levels.fromVertices [0..n-1]
-  mapM_ (\(x, y) -> Levels.insert x y levels) edges
+  mapM_ (\(x, y) -> Levels.link x y levels) edges
   mapM (\(x, y) -> do
            c1 <- Levels.connected x y levels
-           Levels.delete x y levels
+           Levels.cut x y levels
            c2 <- Levels.connected x y levels
            return (c1, c2)
        ) edges

@@ -1,9 +1,26 @@
+-- | This module implements the "Levels" datastructured as introduced in
+-- /Poly-logarithmic deterministic fully-dynamic algorithms for connectivity,
+-- minimum spanning tree, 2-edge, and biconnectivity/ by /Jacob Holm, Kristian
+-- de Lichtenberg and Mikkel Thorup/ in 1998.
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+module Data.Graph.Dynamic.Levels
+    ( -- * Type
+      Graph
 
-module Data.Graph.Dynamic.Levels where
+      -- * Construction
+    , fromVertices
+
+      -- * Queries
+    , connected
+    , hasEdge
+
+      -- * Modifying
+    , link
+    , cut
+    ) where
 
 import           Control.Monad
 import           Control.Monad.Primitive
@@ -34,8 +51,8 @@ fromVertices :: (PrimMonad m, s ~ PrimState m, Ord v) => [v] -> m (Graph s v)
 fromVertices xs = newMutVar =<< L (Set.fromList xs) Set.empty <$> VM.new 0
 
 -- TODO (jaspervdj): Kill Ord constraints in this module
-insert :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Graph s v -> m ()
-insert a b levels = do --traceShow (numEdges, VM.length unLevels, Set.member (a, b) allEdges) $
+link :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Graph s v -> m ()
+link a b levels = do --traceShow (numEdges, VM.length unLevels, Set.member (a, b) allEdges) $
   L {..} <- readMutVar levels
   let newAllEdges = if a == b then allEdges else Set.insert (b, a) $ Set.insert (a, b) allEdges
       numEdges = Set.size newAllEdges `div` 2
@@ -72,8 +89,13 @@ connected a b levels = do
       (etf, _) <- VM.read unLevels 0
       ET.connected a b etf
 
-delete :: forall m s v. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Graph s v -> m ()
-delete a b levels = do
+hasEdge :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Graph s v -> m Bool
+hasEdge a b levels = do
+  L {..} <- readMutVar levels
+  return $ Set.member (a, b) allEdges
+
+cut :: forall m s v. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Graph s v -> m ()
+cut a b levels = do
   L {..} <- readMutVar levels
   let newAllEdges = Set.delete (a, b) $ Set.delete (b, a) allEdges
   -- | a == b = return Graph {..}
