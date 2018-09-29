@@ -2,7 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiWayIf       #-}
 {-# LANGUAGE RecordWildCards  #-}
-module Data.MTree.FastAvl
+module Data.Graph.Dynamic.Internal.FastAvl
     ( Tree
 
     , singleton

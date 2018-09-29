@@ -1,14 +1,14 @@
 {-# LANGUAGE TemplateHaskell #-}
-module Data.MTree.Splay.Tests
+module Data.Graph.Dynamic.Internal.Splay.Tests
     ( tests
     ) where
 
 import           Control.Monad.Primitive              (PrimMonad (..))
 import           Control.Monad.ST                     (runST)
+import qualified Data.Graph.Dynamic.Internal.Splay    as Splay
 import           Data.List.NonEmpty                   (NonEmpty)
 import qualified Data.List.NonEmpty                   as NonEmpty
 import           Data.Monoid                          (Sum (..))
-import qualified Data.MTree.Splay                     as Splay
 import           Data.Semigroup                       ((<>))
 import           Test.Framework                       (Test)
 import           Test.Framework.Providers.QuickCheck2 (testProperty)

@@ -1,8 +1,8 @@
 {-# LANGUAGE BangPatterns #-}
 import Criterion.Main
 
-import qualified Data.MGraph as MGraph
-import qualified Data.MTree.EulerTour as ETF
+import qualified Data.Graph.Dynamic.Levels as Levels
+import qualified Data.Graph.Dynamic.EulerTour as ETF
 
 import Debug.Trace
 
@@ -17,12 +17,12 @@ main = defaultMainWith defaultConfig
 
 completeGraph :: Int -> IO [(Maybe Bool, Maybe Bool)]
 completeGraph n = do
-  levels <- MGraph.fromVertices [0..n-1]
-  mapM_ (\(x, y) -> MGraph.insert x y levels) edges
+  levels <- Levels.fromVertices [0..n-1]
+  mapM_ (\(x, y) -> Levels.insert x y levels) edges
   mapM (\(x, y) -> do
-           c1 <- MGraph.connected x y levels
-           MGraph.delete x y levels
-           c2 <- MGraph.connected x y levels
+           c1 <- Levels.connected x y levels
+           Levels.delete x y levels
+           c2 <- Levels.connected x y levels
            return (c1, c2)
        ) edges
   where

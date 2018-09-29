@@ -1,11 +1,11 @@
 {-# LANGUAGE TemplateHaskell #-}
-module Data.MTree.FastAvl.Tests where
+module Data.Graph.Dynamic.Internal.FastAvl.Tests where
 
 import           Control.Monad.Primitive              (PrimMonad (..))
 import           Control.Monad.ST                     (runST)
+import qualified Data.Graph.Dynamic.Internal.FastAvl  as FastAvl
 import           Data.List.NonEmpty                   (NonEmpty)
 import qualified Data.List.NonEmpty                   as NonEmpty
-import qualified Data.MTree.FastAvl                   as FastAvl
 import           Data.Semigroup                       ((<>))
 import           Test.Framework                       (Test)
 import           Test.Framework.Providers.QuickCheck2 (testProperty)

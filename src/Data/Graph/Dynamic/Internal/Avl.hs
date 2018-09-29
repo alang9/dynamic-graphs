@@ -4,7 +4,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Data.MTree.Avl where
+module Data.Graph.Dynamic.Internal.Avl where
 
 import Data.Monoid ((<>))
 import Control.Monad

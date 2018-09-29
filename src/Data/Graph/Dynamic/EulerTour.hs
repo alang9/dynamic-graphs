@@ -3,30 +3,30 @@
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Data.MTree.EulerTour where
+module Data.Graph.Dynamic.EulerTour where
 
 import           Control.Monad
 import           Control.Monad.Primitive
-import           Data.Hashable                 (Hashable)
+import qualified Data.Graph.Dynamic.Internal.HashTable as HT
+import qualified Data.Graph.Dynamic.Internal.Splay     as Splay
+import           Data.Hashable                         (Hashable)
 import           Data.List
-import qualified Data.List.NonEmpty            as NonEmpty
+import qualified Data.List.NonEmpty                    as NonEmpty
 import           Data.Maybe
 import           Data.Monoid
-import qualified Data.MTree.Internal.HashTable as HT
-import qualified Data.MTree.Splay              as Splay
-import qualified Data.Tree                     as Tree
+import qualified Data.Tree                             as Tree
 
-newtype EulerTourForest s v = ETF
+newtype Forest s v = ETF
     { unETF :: HT.HashTable s (v, v) (Splay.Tree s (v, v) (Sum Int))
     }
 
-empty :: (PrimMonad m, s ~ PrimState m) => m (EulerTourForest s v)
+empty :: (PrimMonad m, s ~ PrimState m) => m (Forest s v)
 empty = ETF <$> HT.new
 
 -- values in nodes must be unique
 fromTree
     :: forall v m s. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Tree.Tree v -> m (EulerTourForest s v)
+    => Tree.Tree v -> m (Forest s v)
 fromTree tree = do
     etf@(ETF ht) <- empty
     _ <- go ht tree
@@ -49,7 +49,7 @@ fromTree tree = do
 
 findRoot
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => v -> EulerTourForest s v -> m (Maybe (Splay.Tree s (v, v) (Sum Int)))
+    => v -> Forest s v -> m (Maybe (Splay.Tree s (v, v) (Sum Int)))
 findRoot v (ETF ht) = do
     mbTree <- HT.lookup ht (v, v)
     case mbTree of
@@ -58,7 +58,7 @@ findRoot v (ETF ht) = do
 
 cut
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => v -> v -> EulerTourForest s v -> m Bool
+    => v -> v -> Forest s v -> m Bool
 cut a b (ETF ht) = do
   mbAb <- HT.lookup ht (a, b)
   mbBa <- HT.lookup ht (b, a)
@@ -97,12 +97,12 @@ reroot t = do
 
 hasEdge
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => v -> v -> EulerTourForest s v -> m Bool
+    => v -> v -> Forest s v -> m Bool
 hasEdge a b (ETF ht) = isJust <$> HT.lookup ht (a, b)
 
 connected
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => v -> v -> EulerTourForest s v -> m (Maybe Bool)
+    => v -> v -> Forest s v -> m (Maybe Bool)
 connected a b (ETF ht) = do
   mbALoop <- HT.lookup ht (a, a)
   mbBLoop <- HT.lookup ht (b, b)
@@ -112,7 +112,7 @@ connected a b (ETF ht) = do
 
 link
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => v -> v -> EulerTourForest s v -> m Bool
+    => v -> v -> Forest s v -> m Bool
 link a b (ETF ht) = do
   mbALoop <- HT.lookup ht (a, a)
   mbBLoop <- HT.lookup ht (b, b)
@@ -141,7 +141,7 @@ link a b (ETF ht) = do
 
     _ -> return False
 
-showEtf :: Show a => EulerTourForest RealWorld a -> IO ()
+showEtf :: Show a => Forest RealWorld a -> IO ()
 showEtf (ETF ht) = do
   trees <- map snd <$> HT.toList ht
   roots <- mapM Splay.root trees
@@ -151,7 +151,7 @@ showEtf (ETF ht) = do
 
 discreteForest
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => [v] -> m (EulerTourForest s v)
+    => [v] -> m (Forest s v)
 discreteForest vs = do
     etf@(ETF ht) <- empty
     forM_ vs $ \v -> do
@@ -161,7 +161,7 @@ discreteForest vs = do
 
 componentSize
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => v -> EulerTourForest s v -> m Int
+    => v -> Forest s v -> m Int
 componentSize v (ETF ht) = do
   mbTree <- HT.lookup ht (v, v)
   case mbTree of

@@ -1,43 +1,40 @@
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Data.MGraph where
+module Data.Graph.Dynamic.Levels where
 
-import Control.Monad
-import Control.Monad.Primitive
-import Data.Bits
-import qualified Data.Map.Strict as Map
-import Data.Map.Strict (Map)
-import Data.Primitive.MutVar
-import qualified Data.Set as Set
-import Data.Set (Set)
-import qualified Data.Vector.Mutable as VM
-import Data.Hashable (Hashable)
+import           Control.Monad
+import           Control.Monad.Primitive
+import           Data.Bits
+import           Data.Hashable                       (Hashable)
+import           Data.Map.Strict                     (Map)
+import qualified Data.Map.Strict                     as Map
+import           Data.Primitive.MutVar
+import           Data.Set                            (Set)
+import qualified Data.Set                            as Set
+import qualified Data.Vector.Mutable                 as VM
 
-import qualified Data.MTree.Avl as Avl
-import qualified Data.MTree.Splay as Splay
-import qualified Data.MTree.FastAvl as FastAvl
-import qualified Data.MTree.EulerTour as ET
-import Data.MTree.EulerTour (EulerTourForest)
+import qualified Data.Graph.Dynamic.EulerTour        as ET
+import qualified Data.Graph.Dynamic.Internal.Splay   as Splay
 
 data L s v = L
   { vertices :: Set v
   , allEdges :: !(Set (v, v))
-  , unLevels :: !(VM.MVector s (EulerTourForest s v, Map v (Set v)))
+  , unLevels :: !(VM.MVector s (ET.Forest s v, Map v (Set v)))
   }
 
-type Levels s v = MutVar s (L s v)
+type Graph s v = MutVar s (L s v)
 
 logBase2 :: Int -> Int
 logBase2 x = finiteBitSize x - 1 - countLeadingZeros x
 
-fromVertices :: (PrimMonad m, s ~ PrimState m, Ord v) => [v] -> m (Levels s v)
+fromVertices :: (PrimMonad m, s ~ PrimState m, Ord v) => [v] -> m (Graph s v)
 fromVertices xs = newMutVar =<< L (Set.fromList xs) Set.empty <$> VM.new 0
 
 -- TODO (jaspervdj): Kill Ord constraints in this module
-insert :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Levels s v -> m ()
+insert :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Graph s v -> m ()
 insert a b levels = do --traceShow (numEdges, VM.length unLevels, Set.member (a, b) allEdges) $
   L {..} <- readMutVar levels
   let newAllEdges = if a == b then allEdges else Set.insert (b, a) $ Set.insert (a, b) allEdges
@@ -66,7 +63,7 @@ insert a b levels = do --traceShow (numEdges, VM.length unLevels, Set.member (a,
           VM.write unLevels' 0 (thisEtf, newEdges)
           writeMutVar levels $ L {allEdges = newAllEdges, unLevels = unLevels', ..}
 
-connected :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Levels s v -> m (Maybe Bool)
+connected :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Graph s v -> m (Maybe Bool)
 connected a b levels = do
   L {..} <- readMutVar levels
   if VM.null unLevels
@@ -75,18 +72,18 @@ connected a b levels = do
       (etf, _) <- VM.read unLevels 0
       ET.connected a b etf
 
-delete :: forall m s v. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Levels s v -> m ()
+delete :: forall m s v. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => v -> v -> Graph s v -> m ()
 delete a b levels = do
   L {..} <- readMutVar levels
   let newAllEdges = Set.delete (a, b) $ Set.delete (b, a) allEdges
-  -- | a == b = return Levels {..}
+  -- | a == b = return Graph {..}
   if VM.length unLevels == 0
     then return ()
     else do
       go unLevels (VM.length unLevels-1)
       writeMutVar levels L {allEdges = newAllEdges, ..}
   where
-    go :: VM.MVector s (EulerTourForest s v, Map v (Set v)) -> Int -> m ()
+    go :: VM.MVector s (ET.Forest s v, Map v (Set v)) -> Int -> m ()
     go unLevels idx = do
       -- traceShowM ("go", idx)
       (etf, edges) <- VM.read unLevels idx
@@ -124,7 +121,7 @@ delete a b levels = do
             Nothing -> return ()
             Just newPrevEdges -> VM.modify unLevels (\(prevEtf, _) -> (prevEtf, newPrevEdges)) (idx + 1)
           case replacementEdge of
-            Nothing -> when (idx > 0) $ go unLevels (idx - 1)
+            Nothing  -> when (idx > 0) $ go unLevels (idx - 1)
             Just rep -> propagateReplacement unLevels (idx - 1) rep
 
     propagateReplacement unLevels idx (c, d) = when (idx >= 0) $ do
@@ -134,7 +131,7 @@ delete a b levels = do
       propagateReplacement unLevels (idx - 1) (c, d)
 
     findReplacement ::
-      EulerTourForest s v -> Map v (Set v) -> Maybe (Map v (Set v)) ->
+      ET.Forest s v -> Map v (Set v) -> Maybe (Map v (Set v)) ->
       v -> [v] ->
       m (Maybe (v, v), Map v (Set v), Maybe (Map v (Set v)))
     findReplacement _ remainingEdges m'prevEdges _ [] = return (Nothing, remainingEdges, m'prevEdges)

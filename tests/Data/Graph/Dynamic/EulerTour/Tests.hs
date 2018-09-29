@@ -5,7 +5,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 
-module Data.MTree.EulerTour.Tests where
+module Data.Graph.Dynamic.EulerTour.Tests where
 
 import Control.Monad
 import Control.Monad.ST
@@ -17,8 +17,7 @@ import Test.Framework.TH
 import Test.Framework.Providers.QuickCheck2
 import Test.QuickCheck
 
-import Data.MTree.EulerTour
--- import qualified Data.MGraph as MGraph
+import qualified Data.Graph.Dynamic.EulerTour as ET
 
 import Action
 import Graph
@@ -51,49 +50,44 @@ runSlowForestAction sf@Graph {..} (Query x y) = (sf, Just (Set.member y' $ compo
     y' = mod y numNodes
 
 runForestAction ::
-  Int -> EulerTourForest s Int -> [Bool] -> Action t -> ST s [Bool]
-runForestAction n etf xs (Cut x y) = cut x' y' etf >> return xs
+  Int -> ET.Forest s Int -> [Bool] -> Action t -> ST s [Bool]
+runForestAction n etf xs (Cut x y) = ET.cut x' y' etf >> return xs
   where
     x' = mod x n
     y' = mod y n
-runForestAction n etf xs (Link x y) = link x' y' etf >> return xs
+runForestAction n etf xs (Link x y) = ET.link x' y' etf >> return xs
   where
     x' = mod x n
     y' = mod y n
-runForestAction n etf xs (Toggle x y) = hasEdge x' y' etf >>= \case
-  True -> cut x' y' etf >> return xs
-  False -> link x' y' etf >> return xs
+runForestAction n etf xs (Toggle x y) = ET.hasEdge x' y' etf >>= \case
+  True -> ET.cut x' y' etf >> return xs
+  False -> ET.link x' y' etf >> return xs
   where
     x' = mod x n
     y' = mod y n
-runForestAction n etf xs (Query x y) = connected x' y' etf >>= \case
+runForestAction n etf xs (Query x y) = ET.connected x' y' etf >>= \case
   Nothing -> return xs
   Just q -> return (q:xs)
   where
     x' = mod x n
     y' = mod y n
 
-prop_forest_linkcut :: Positive Int -> [Action 'LinkCut] -> Property
-prop_forest_linkcut (Positive n) actions = slowResult === result
+checkActions :: Positive Int -> [Action t] -> Property
+checkActions (Positive n) actions = slowResult === result
   where
     initialGraph = discreteGraph n
     slowResult = catMaybes $ snd $ mapAccumL runSlowForestAction initialGraph actions
     result :: [Bool]
     result = runST $ do
-      initialForest <- discreteForest [0..n-1]
+      initialForest <- ET.discreteForest [0..n-1]
       results <- foldM (runForestAction n initialForest) [] actions
       return $ reverse results
 
+prop_forest_linkcut :: Positive Int -> [Action 'LinkCut] -> Property
+prop_forest_linkcut = checkActions
+
 prop_forest_toggle :: Positive Int -> [Action 'Toggl] -> Property
-prop_forest_toggle (Positive n) actions = slowResult === result
-  where
-    initialGraph = discreteGraph n
-    slowResult = catMaybes $ snd $ mapAccumL runSlowForestAction initialGraph actions
-    result :: [Bool]
-    result = runST $ do
-      initialForest <- discreteForest [0..n-1]
-      results <- foldM (runForestAction n initialForest) [] actions
-      return $ reverse results
+prop_forest_toggle = checkActions
 
 tests :: Test
 tests = $testGroupGenerator

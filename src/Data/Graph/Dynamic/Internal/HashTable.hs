@@ -1,6 +1,6 @@
 -- | This is a very simple wrapper around the 'hashtables' library that uses
 -- 'PrimMonad' rather than 'ST'.
-module Data.MTree.Internal.HashTable
+module Data.Graph.Dynamic.Internal.HashTable
     ( HashTable
     , new
     , insert

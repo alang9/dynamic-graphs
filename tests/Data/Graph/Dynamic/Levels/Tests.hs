@@ -5,7 +5,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 
-module Data.MGraph.Tests where
+module Data.Graph.Dynamic.Levels.Tests where
 
 import Control.Monad
 import Control.Monad.ST
@@ -18,7 +18,7 @@ import Test.Framework.TH
 import Test.Framework.Providers.QuickCheck2
 import Test.QuickCheck
 
-import qualified Data.MGraph as MGraph
+import qualified Data.Graph.Dynamic.Levels as Levels
 
 import Action
 import Graph
@@ -47,29 +47,29 @@ runSlowGraphAction sf@Graph {..} (Query x y) = (sf, Just (Set.member y' $ compon
     y' = mod y numNodes
 
 runGraphAction ::
-  Int -> MGraph.Levels s Int -> [Bool] -> Action t -> ST s [Bool]
+  Int -> Levels.Graph s Int -> [Bool] -> Action t -> ST s [Bool]
 runGraphAction n levels xs (Cut x y) = do
-    MGraph.delete x' y' levels
+    Levels.delete x' y' levels
     return xs
   where
     x' = mod x n
     y' = mod y n
 runGraphAction n levels xs (Link x y) = do
-  MGraph.insert x' y' levels
+  Levels.insert x' y' levels
   return xs
   where
     x' = mod x n
     y' = mod y n
 runGraphAction n levels xs (Toggle x y) = do
-  MGraph.L {..} <- readMutVar levels
+  Levels.L {..} <- readMutVar levels
   if Set.member (x', y') allEdges
-    then MGraph.delete x' y' levels
-    else MGraph.insert x' y' levels
+    then Levels.delete x' y' levels
+    else Levels.insert x' y' levels
   return xs
   where
     x' = mod x n
     y' = mod y n
-runGraphAction n levels xs (Query x y) = MGraph.connected x' y' levels >>= \case
+runGraphAction n levels xs (Query x y) = Levels.connected x' y' levels >>= \case
   Nothing -> return xs
   Just q -> do
     return (q:xs)
@@ -77,27 +77,22 @@ runGraphAction n levels xs (Query x y) = MGraph.connected x' y' levels >>= \case
     x' = mod x n
     y' = mod y n
 
-prop_graph_linkcut :: Positive Int -> [Action 'LinkCut] -> Property
-prop_graph_linkcut (Positive n) actions = slowResult === result
+checkActions :: Positive Int -> [Action t] -> Property
+checkActions (Positive n) actions = slowResult === result
   where
     initialSlowGraph = discreteGraph n
     slowResult = catMaybes $ snd $ mapAccumL runSlowGraphAction initialSlowGraph actions
     result :: [Bool]
     result = runST $ do
-      initialGraph <- MGraph.fromVertices [0..n-1]
+      initialGraph <- Levels.fromVertices [0..n-1]
       results <- foldM (runGraphAction n initialGraph) [] actions
       return $ reverse results
 
+prop_graph_linkcut :: Positive Int -> [Action 'LinkCut] -> Property
+prop_graph_linkcut = checkActions
+
 prop_graph_toggle :: Positive Int -> [Action 'Toggl] -> Property
-prop_graph_toggle (Positive n) actions = slowResult === result
-  where
-    initialSlowGraph = discreteGraph n
-    slowResult = catMaybes $ snd $ mapAccumL runSlowGraphAction initialSlowGraph actions
-    result :: [Bool]
-    result = runST $ do
-      initialGraph <- MGraph.fromVertices [0..n-1]
-      results <- foldM (runGraphAction n initialGraph) [] actions
-      return $ reverse results
+prop_graph_toggle = checkActions
 
 tests :: Test
 tests = $testGroupGenerator

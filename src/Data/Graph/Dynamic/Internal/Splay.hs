@@ -1,6 +1,6 @@
 {-# LANGUAGE MultiWayIf      #-}
 {-# LANGUAGE RecordWildCards #-}
-module Data.MTree.Splay
+module Data.Graph.Dynamic.Internal.Splay
     ( Tree
 
     , singleton
