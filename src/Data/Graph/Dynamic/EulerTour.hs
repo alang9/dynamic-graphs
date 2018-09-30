@@ -24,6 +24,8 @@ module Data.Graph.Dynamic.EulerTour
       -- * Modifying
     , link
     , cut
+    , insertVertex
+    , deleteVertex
 
       -- * Advanced/internal operations
     , findRoot
@@ -33,7 +35,7 @@ module Data.Graph.Dynamic.EulerTour
     , print
     ) where
 
-import           Control.Monad
+import           Control.Monad                         (foldM, forM_)
 import           Control.Monad.Primitive
 import qualified Data.Graph.Dynamic.Internal.HashTable as HT
 import qualified Data.Graph.Dynamic.Internal.Splay     as Splay
@@ -209,6 +211,34 @@ link etf a b = do
           return True
 
     _ -> return False
+
+insertVertex
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
+    => Forest s v -> v -> m ()
+insertVertex etf v = do
+    mbTree <- lookupTree etf v v
+    case mbTree of
+        Just  _ -> return ()  -- It's already there
+        Nothing -> do
+            node <- Splay.singleton (v, v) (Sum 1)
+            insertTree etf v v node
+
+neighbours
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
+    => Forest s v -> v -> m [v]
+neighbours (ETF ht) x = do
+    mbMap <- HT.lookup ht x
+    case mbMap of
+        Nothing -> return []
+        Just m  -> return $ filter (/= x) $ map fst $ HMS.toList m
+
+deleteVertex
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
+    => Forest s v -> v -> m ()
+deleteVertex etf x = do
+    nbs <- neighbours etf x
+    forM_ nbs $ \y -> cut etf x y
+    deleteTree etf x x
 
 print :: Show a => Forest RealWorld a -> IO ()
 print (ETF ht) = do
