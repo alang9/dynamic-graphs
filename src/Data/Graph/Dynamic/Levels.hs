@@ -37,8 +37,8 @@ import qualified Data.Graph.Dynamic.EulerTour      as ET
 import qualified Data.Graph.Dynamic.Internal.Splay as Splay
 
 data L s v = L
-  { vertices :: HS.HashSet v
-  , allEdges :: !(HS.HashSet (v, v))
+  { numEdges :: !Int
+  , allEdges :: !(HMS.HashMap v (HS.HashSet v))
   , unLevels :: !(VM.MVector s (ET.Forest s v, HMS.HashMap v (HS.HashSet v)))
   }
 
@@ -49,23 +49,32 @@ logBase2 x = finiteBitSize x - 1 - countLeadingZeros x
 
 fromVertices
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => [v] -> m (Graph s v)
-fromVertices xs = newMutVar =<< L (HS.fromList xs) HS.empty <$> VM.new 0
+fromVertices xs = do
+  unLevels <- VM.new 0
+  let allEdges = HMS.fromList $ zip xs $ repeat HS.empty
+      numEdges = 0
+  newMutVar L {..}
 
 -- TODO (jaspervdj): Kill Ord constraints in this module
 insertEdge :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m ()
 insertEdge levels a b = do --traceShow (numEdges, VM.length unLevels, HS.member (a, b) allEdges) $
   L {..} <- readMutVar levels
-  let newAllEdges = if a == b then allEdges else HS.insert (b, a) $ HS.insert (a, b) allEdges
-      numEdges = HS.size newAllEdges `div` 2
-  if HS.member (a, b) allEdges
+  let newAllEdges =
+            HMS.insertWith HS.union a (HS.singleton b) $
+            HMS.insertWith HS.union b (HS.singleton a) $
+            allEdges
+
+      newNumEdges = numEdges + 1
+
+  if maybe False (b `HS.member`) (HMS.lookup a allEdges) || a == b
     then return ()
     else do
       unLevels' <- do
         let oldNumLevels = VM.length unLevels
-        newUnLevels <- VM.take (logBase2 numEdges + 1) <$>
-          VM.grow unLevels (max 0 $ logBase2 numEdges - oldNumLevels + 1)
-        forM_ [oldNumLevels .. logBase2 numEdges] $ \levelIdx -> do
-          df <- ET.discreteForest $ HS.toList vertices
+        newUnLevels <- VM.take (logBase2 newNumEdges + 1) <$>
+          VM.grow unLevels (max 0 $ logBase2 newNumEdges - oldNumLevels + 1)
+        forM_ [oldNumLevels .. logBase2 newNumEdges] $ \levelIdx -> do
+          df <- ET.discreteForest $ map fst $ HMS.toList allEdges
           VM.write newUnLevels levelIdx (df, HMS.empty)
         return newUnLevels
       -- traceShowM (VM.null levels')
@@ -74,12 +83,13 @@ insertEdge levels a b = do --traceShow (numEdges, VM.length unLevels, HS.member 
         else do
           (thisEtf, thisEdges) <- VM.read unLevels' 0
           _m'newEtf <- ET.insertEdge thisEtf a b
-          -- traceShowM $ (numEdges, m'newEtf)
-          -- traceShowM $ (numEdges, "test3")
+          -- traceShowM $ (newNumEdges, m'newEtf)
+          -- traceShowM $ (newNumEdges, "test3")
           let newEdges = HMS.insertWith HS.union a (HS.singleton b) $
                 HMS.insertWith HS.union b (HS.singleton a) thisEdges
           VM.write unLevels' 0 (thisEtf, newEdges)
-          writeMutVar levels $ L {allEdges = newAllEdges, unLevels = unLevels', ..}
+          writeMutVar levels $ L
+              {allEdges = newAllEdges, unLevels = unLevels',numEdges = newNumEdges}
 
 connected :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m (Maybe Bool)
 connected levels a b = do
@@ -93,20 +103,21 @@ connected levels a b = do
 hasEdge :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m Bool
 hasEdge levels a b = do
   L {..} <- readMutVar levels
-  return $ HS.member (a, b) allEdges
+  return $ maybe False (b `HS.member`) (HMS.lookup a allEdges)
 
 deleteEdge :: forall m s v. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m ()
 deleteEdge levels a b = do
   L {..} <- readMutVar levels
-  let newAllEdges = HS.delete (a, b) $ HS.delete (b, a) allEdges
+  let newAllEdges = HMS.adjust (HS.delete a) b $ HMS.adjust (HS.delete b) a allEdges
   -- | a == b = return Graph {..}
-  if VM.length unLevels == 0
+  if VM.length unLevels == 0 || a == b
     then return ()
     else do
-      go unLevels (VM.length unLevels-1)
-      writeMutVar levels L {allEdges = newAllEdges, ..}
+      cut <- go unLevels (VM.length unLevels-1)
+      let newNumEdges = if cut then numEdges - 1 else numEdges
+      writeMutVar levels L {allEdges = newAllEdges, numEdges = newNumEdges, ..}
   where
-    go :: VM.MVector s (ET.Forest s v, HMS.HashMap v (HS.HashSet v)) -> Int -> m ()
+    go :: VM.MVector s (ET.Forest s v, HMS.HashMap v (HS.HashSet v)) -> Int -> m Bool
     go unLevels idx = do
       -- traceShowM ("go", idx)
       (etf, edges) <- VM.read unLevels idx
@@ -115,7 +126,7 @@ deleteEdge levels a b = do
       case cutResult of
         False -> do
           VM.write unLevels idx (etf, edges')
-          when (idx > 0) $ go unLevels (idx - 1)
+          if idx > 0 then go unLevels (idx - 1) else return False
         True -> do
           aSize <- ET.componentSize etf a
           bSize <- ET.componentSize etf b
@@ -144,8 +155,8 @@ deleteEdge levels a b = do
             Nothing -> return ()
             Just newPrevEdges -> VM.modify unLevels (\(prevEtf, _) -> (prevEtf, newPrevEdges)) (idx + 1)
           case replacementEdge of
-            Nothing  -> when (idx > 0) $ go unLevels (idx - 1)
-            Just rep -> propagateReplacement unLevels (idx - 1) rep
+            Nothing  -> if idx > 0 then go unLevels (idx - 1) else return True
+            Just rep -> propagateReplacement unLevels (idx - 1) rep >> return True
 
     propagateReplacement unLevels idx (c, d) = when (idx >= 0) $ do
       (etf, _) <- VM.read unLevels idx
