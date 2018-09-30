@@ -39,6 +39,7 @@ library
 
 test-suite dynamic-connectivity-tests
   type: exitcode-stdio-1.0
+  ghc-options: -Wall
   main-is: Suite.hs
   hs-source-dirs: tests
   default-language: Haskell2010
@@ -46,11 +47,15 @@ test-suite dynamic-connectivity-tests
   other-modules:
     Action
     Graph
+
     Data.Graph.Dynamic.EulerTour.Tests
     Data.Graph.Dynamic.Internal.BitVector.Tests
     Data.Graph.Dynamic.Internal.FastAvl.Tests
     Data.Graph.Dynamic.Internal.Splay.Tests
     Data.Graph.Dynamic.Levels.Tests
+
+    Data.Graph.Dynamic.Program
+    Data.Graph.Dynamic.Slow
 
   build-depends:
     base,

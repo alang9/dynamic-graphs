@@ -38,6 +38,7 @@ import           Control.Monad.Primitive
 import qualified Data.Graph.Dynamic.Internal.HashTable as HT
 import qualified Data.Graph.Dynamic.Internal.Splay     as Splay
 import           Data.Hashable                         (Hashable)
+import qualified Data.HashMap.Strict                   as HMS
 import           Data.List
 import qualified Data.List.NonEmpty                    as NonEmpty
 import           Data.Maybe
@@ -46,8 +47,37 @@ import qualified Data.Tree                             as Tree
 import           Prelude                               hiding (print)
 
 newtype Forest s v = ETF
-    { unETF :: HT.HashTable s (v, v) (Splay.Tree s (v, v) (Sum Int))
+    { _unETF :: HT.HashTable s v (HMS.HashMap v (Splay.Tree s (v, v) (Sum Int)))
     }
+
+insertTree
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
+    => Forest s v -> v -> v -> Splay.Tree s (v, v) (Sum Int) -> m ()
+insertTree (ETF ht) x y t = do
+    mbMap <- HT.lookup ht x
+    case mbMap of
+        Nothing -> HT.insert ht x $ HMS.singleton y t
+        Just m  -> HT.insert ht x $ HMS.insert y t m
+
+lookupTree
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
+    => Forest s v -> v -> v -> m (Maybe (Splay.Tree s (v, v) (Sum Int)))
+lookupTree (ETF ht) x y = do
+    mbMap <- HT.lookup ht x
+    case mbMap of
+        Nothing -> return Nothing
+        Just m  -> return $ HMS.lookup y m
+
+deleteTree
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
+    => Forest s v -> v -> v -> m ()
+deleteTree (ETF ht) x y = do
+    mbMap <- HT.lookup ht x
+    case mbMap of
+        Nothing -> return ()
+        Just m0 ->
+            let m1 = HMS.delete y m0 in
+            if HMS.null m1 then HT.delete ht x else HT.insert ht x m1
 
 empty :: (PrimMonad m, s ~ PrimState m) => m (Forest s v)
 empty = ETF <$> HT.new
@@ -58,39 +88,39 @@ fromTree
     => Tree.Tree v -> m (Forest s v)
 fromTree tree = do
     etf <- empty
-    _ <- go (unETF etf) tree
+    _ <- go etf tree
     return etf
   where
-    go ht (Tree.Node l children) = do
+    go etf (Tree.Node l children) = do
       node0 <- Splay.singleton (l, l) (Sum 1)
-      HT.insert ht (l, l) node0
-      foldM (go' ht l) node0 children
+      insertTree etf l l node0
+      foldM (go' etf l) node0 children
 
-    go' ht parent node0 tr@(Tree.Node l _) = do
-      lnode     <- go ht tr
+    go' etf parent node0 tr@(Tree.Node l _) = do
+      lnode     <- go etf tr
       parentToL <- Splay.singleton (parent, l) (Sum 0)
       lToParent <- Splay.singleton (l, parent) (Sum 0)
 
       node1 <- Splay.concat $ node0 NonEmpty.:| [parentToL, lnode, lToParent]
-      HT.insert ht (l, parent) lToParent
-      HT.insert ht (parent, l) parentToL
+      insertTree etf l parent lToParent
+      insertTree etf parent l parentToL
       return node1
 
 discreteForest
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
     => [v] -> m (Forest s v)
 discreteForest vs = do
-    etf@(ETF ht) <- empty
+    etf <- empty
     forM_ vs $ \v -> do
         node <- Splay.singleton (v, v) (Sum 1)
-        HT.insert ht (v, v) node
+        insertTree etf v v node
     return etf
 
 findRoot
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
     => Forest s v -> v -> m (Maybe (Splay.Tree s (v, v) (Sum Int)))
-findRoot (ETF ht) v = do
-    mbTree <- HT.lookup ht (v, v)
+findRoot etf v = do
+    mbTree <- lookupTree etf v v
     case mbTree of
         Nothing -> return Nothing
         Just t  -> Just <$> Splay.root t
@@ -98,9 +128,9 @@ findRoot (ETF ht) v = do
 cut
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
     => Forest s v -> v -> v -> m Bool
-cut (ETF ht) a b = do
-  mbAb <- HT.lookup ht (a, b)
-  mbBa <- HT.lookup ht (b, a)
+cut etf a b = do
+  mbAb <- lookupTree etf a b
+  mbBa <- lookupTree etf b a
   case (mbAb, mbBa) of
     _ | a == b -> return False -- Can't cut self-loops
     (Just ab, Just ba) -> do
@@ -118,8 +148,8 @@ cut (ETF ht) a b = do
         return (part1, part3, part4)
 
       _ <- sequenceA $ Splay.append <$> mbL <*> mbR
-      HT.delete ht (a, b)
-      HT.delete ht (b, a)
+      deleteTree etf a b
+      deleteTree etf b a
       return True
 
     (Nothing, _) -> return False -- No edge to cut
@@ -137,14 +167,14 @@ reroot t = do
 hasEdge
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
     => Forest s v -> v -> v -> m Bool
-hasEdge (ETF ht) a b = isJust <$> HT.lookup ht (a, b)
+hasEdge etf a b = isJust <$> lookupTree etf a b
 
 connected
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
     => Forest s v -> v -> v -> m (Maybe Bool)
-connected (ETF ht) a b = do
-  mbALoop <- HT.lookup ht (a, a)
-  mbBLoop <- HT.lookup ht (b, b)
+connected etf a b = do
+  mbALoop <- lookupTree etf a a
+  mbBLoop <- lookupTree etf b b
   case (mbALoop, mbBLoop) of
     (Just aLoop, Just bLoop) -> Just <$> Splay.connected aLoop bLoop
     _                        -> return Nothing
@@ -152,9 +182,9 @@ connected (ETF ht) a b = do
 link
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
     => Forest s v -> v -> v -> m Bool
-link (ETF ht) a b = do
-  mbALoop <- HT.lookup ht (a, a)
-  mbBLoop <- HT.lookup ht (b, b)
+link etf a b = do
+  mbALoop <- lookupTree etf a a
+  mbBLoop <- lookupTree etf b b
   case (mbALoop, mbBLoop) of
     (Just aLoop, Just bLoop) -> Splay.connected aLoop bLoop >>= \case
         True -> return False
@@ -174,15 +204,16 @@ link (ETF ht) a b = do
             , mbPreA
             ]
 
-          HT.insert ht (a, b) abNode
-          HT.insert ht (b, a) baNode
+          insertTree etf a b abNode
+          insertTree etf b a baNode
           return True
 
     _ -> return False
 
 print :: Show a => Forest RealWorld a -> IO ()
 print (ETF ht) = do
-  trees <- map snd <$> HT.toList ht
+  maps <- map snd <$> HT.toList ht
+  let trees = concatMap (map snd . HMS.toList) maps
   roots <- mapM Splay.root trees
   forM_ (nub roots) $ \root -> do
     Splay.print root
@@ -191,8 +222,8 @@ print (ETF ht) = do
 componentSize
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
     => Forest s v -> v -> m Int
-componentSize (ETF ht) v = do
-  mbTree <- HT.lookup ht (v, v)
+componentSize etf v = do
+  mbTree <- lookupTree etf v v
   case mbTree of
     Nothing -> return 0
     Just tree -> do
