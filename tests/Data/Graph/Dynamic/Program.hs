@@ -89,17 +89,9 @@ instance QC.Arbitrary IntTreeProgram where
     arbitrary = QC.sized $ \size -> fmap IntTreeProgram $
         genProgram True size Slow.empty [1 ..]
 
-    shrink = fmap IntTreeProgram . shrinkList . unIntTreeProgram
-
 newtype IntGraphProgram = IntGraphProgram {unIntGraphProgram :: Program Int}
     deriving (Show)
 
 instance QC.Arbitrary IntGraphProgram where
     arbitrary = QC.sized $ \size -> fmap IntGraphProgram $
         genProgram False size Slow.empty [1 ..]
-
-    shrink = fmap IntGraphProgram . shrinkList . unIntGraphProgram
-
-shrinkList :: [a] -> [[a]]
-shrinkList []       = []
-shrinkList (x : xs) = xs : map (x :) (shrinkList xs)

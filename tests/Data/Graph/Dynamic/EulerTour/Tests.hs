@@ -4,11 +4,14 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE BangPatterns #-}
 
 module Data.Graph.Dynamic.EulerTour.Tests where
 
 import Control.Monad
+import Control.Monad.Primitive (PrimMonad (..))
 import Control.Monad.ST
+import Data.Hashable (Hashable)
 import Data.List
 import Data.Maybe
 import qualified Data.Set as Set
@@ -18,6 +21,7 @@ import Test.Framework.Providers.QuickCheck2
 import Test.QuickCheck
 
 import qualified Data.Graph.Dynamic.EulerTour as ET
+import Data.Graph.Dynamic.Program
 
 import Action
 import Graph
@@ -83,11 +87,45 @@ checkActions (Positive n) actions = slowResult === result
       results <- foldM (runForestAction n initialForest) [] actions
       return $ reverse results
 
+runProgram
+    :: (Eq v, Hashable v, Show v, PrimMonad m)
+    => ET.Forest (PrimState m) v -> Program v -> m ()
+runProgram f = go (0 :: Int)
+  where
+    go _i [] = return ()
+    go !i (instr : instrs) = do
+
+        let expected ==? actual = when (expected /= actual) $ fail $
+                "Error after " ++ show i ++
+                " instructions, expected " ++ show expected ++
+                " but got " ++ show actual ++ " in instruction " ++
+                show instr
+
+        case instr of
+            InsertVertex x -> ET.insertVertex f x
+            InsertEdge x y expected -> do
+                actual <- ET.link f x y
+                expected ==? actual
+            DeleteVertex x -> ET.deleteVertex f x
+            DeleteEdge x y expected -> do
+                actual <- ET.cut f x y
+                expected ==? actual
+            Connected x y expected -> do
+                actual <- ET.connected f x y
+                expected ==? fromMaybe False actual
+
+        go (i + 1) instrs
+
 prop_forest_linkcut :: Positive Int -> [Action 'LinkCut] -> Property
 prop_forest_linkcut = checkActions
 
 prop_forest_toggle :: Positive Int -> [Action 'Toggl] -> Property
 prop_forest_toggle = checkActions
+
+prop_program :: IntTreeProgram -> ()
+prop_program (IntTreeProgram p) = runST $ do
+    f <- ET.empty
+    runProgram f p
 
 tests :: Test
 tests = $testGroupGenerator

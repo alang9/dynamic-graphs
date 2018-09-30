@@ -43,7 +43,10 @@ insertEdge x y g0 = case HMS.lookup x (unGraph g0) of
 
 deleteVertex :: (Eq v, Hashable v) => v -> Graph v -> Graph v
 deleteVertex x g0 =
-    List.foldl' (\g n -> snd (deleteEdge x n g)) g0 (neighbours x g0)
+    let nbs = neighbours x g0
+        g1 = List.foldl' (\g n -> snd (deleteEdge x n g)) g0 nbs in
+    Graph $ HMS.delete x $ unGraph g1
+
 
 deleteEdge :: (Eq v, Hashable v) => v -> v -> Graph v -> (Bool, Graph v)
 deleteEdge x y g0 = case HMS.lookup x (unGraph g0) of
