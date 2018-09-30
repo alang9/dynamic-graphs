@@ -22,8 +22,8 @@ module Data.Graph.Dynamic.EulerTour
     , hasEdge
 
       -- * Modifying
-    , link
-    , cut
+    , insertEdge
+    , deleteEdge
     , insertVertex
     , deleteVertex
 
@@ -127,10 +127,10 @@ findRoot etf v = do
         Nothing -> return Nothing
         Just t  -> Just <$> Splay.root t
 
-cut
+deleteEdge
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
     => Forest s v -> v -> v -> m Bool
-cut etf a b = do
+deleteEdge etf a b = do
   mbAb <- lookupTree etf a b
   mbBa <- lookupTree etf b a
   case (mbAb, mbBa) of
@@ -181,10 +181,10 @@ connected etf a b = do
     (Just aLoop, Just bLoop) -> Just <$> Splay.connected aLoop bLoop
     _                        -> return Nothing
 
-link
+insertEdge
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
     => Forest s v -> v -> v -> m Bool
-link etf a b = do
+insertEdge etf a b = do
   mbALoop <- lookupTree etf a a
   mbBLoop <- lookupTree etf b b
   case (mbALoop, mbBLoop) of
@@ -237,7 +237,7 @@ deleteVertex
     => Forest s v -> v -> m ()
 deleteVertex etf x = do
     nbs <- neighbours etf x
-    forM_ nbs $ \y -> cut etf x y
+    forM_ nbs $ \y -> deleteEdge etf x y
     deleteTree etf x x
 
 print :: Show a => Forest RealWorld a -> IO ()

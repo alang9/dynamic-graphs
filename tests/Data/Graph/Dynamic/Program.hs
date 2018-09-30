@@ -1,11 +1,18 @@
+{-# LANGUAGE BangPatterns #-}
 module Data.Graph.Dynamic.Program
     ( Program
     , Instruction (..)
+    , genProgram
+
+    , Interpreter (..)
+    , runProgram
 
     , IntTreeProgram (..)
     , IntGraphProgram (..)
     ) where
 
+import           Control.Monad           (when)
+import           Control.Monad.Primitive (PrimMonad (..))
 import qualified Data.Graph.Dynamic.Slow as Slow
 import           Data.Hashable           (Hashable)
 import qualified Data.HashSet            as HS
@@ -81,6 +88,53 @@ genProgram acyclic size0 graph0 vs0 = do
         y <- QC.elements $ Slow.vertices graph0
         let res = Slow.connected x y graph0
         return $ Just (Connected x y res, graph0, vs0)
+
+-- | A graph that we can interpret the program against.
+class Interpreter f where
+    insertVertex
+        :: (Eq v, Hashable v, PrimMonad m)
+        => f (PrimState m) v -> v -> m ()
+    insertEdge
+        :: (Eq v, Hashable v, PrimMonad m)
+        => f (PrimState m) v -> v -> v -> m Bool
+    deleteVertex
+        :: (Eq v, Hashable v, PrimMonad m)
+        => f (PrimState m) v -> v -> m ()
+    deleteEdge
+        :: (Eq v, Hashable v, PrimMonad m)
+        => f (PrimState m) v -> v -> v -> m Bool
+    connected
+        :: (Eq v, Hashable v, PrimMonad m)
+        => f (PrimState m) v -> v -> v -> m Bool
+
+runProgram
+    :: (Eq v, Hashable v, Show v, PrimMonad m, Interpreter f)
+    => f (PrimState m) v -> Program v -> m ()
+runProgram f = go (0 :: Int)
+  where
+    go _i [] = return ()
+    go !i (instr : instrs) = do
+
+        let expected ==? actual = when (expected /= actual) $ fail $
+                "Error after " ++ show i ++
+                " instructions, expected " ++ show expected ++
+                " but got " ++ show actual ++ " in instruction " ++
+                show instr
+
+        case instr of
+            InsertVertex x -> insertVertex f x
+            InsertEdge x y expected -> do
+                actual <- insertEdge f x y
+                expected ==? actual
+            DeleteVertex x -> deleteVertex f x
+            DeleteEdge x y expected -> do
+                actual <- deleteEdge f x y
+                expected ==? actual
+            Connected x y expected -> do
+                actual <- connected f x y
+                expected ==? actual
+
+        go (i + 1) instrs
 
 newtype IntTreeProgram = IntTreeProgram {unIntTreeProgram :: Program Int}
     deriving (Show)

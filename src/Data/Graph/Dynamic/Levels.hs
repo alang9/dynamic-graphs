@@ -20,8 +20,8 @@ module Data.Graph.Dynamic.Levels
     , hasEdge
 
       -- * Modifying
-    , link
-    , cut
+    , insertEdge
+    , deleteEdge
     ) where
 
 import           Control.Monad
@@ -52,8 +52,8 @@ fromVertices
 fromVertices xs = newMutVar =<< L (HS.fromList xs) HS.empty <$> VM.new 0
 
 -- TODO (jaspervdj): Kill Ord constraints in this module
-link :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m ()
-link levels a b = do --traceShow (numEdges, VM.length unLevels, HS.member (a, b) allEdges) $
+insertEdge :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m ()
+insertEdge levels a b = do --traceShow (numEdges, VM.length unLevels, HS.member (a, b) allEdges) $
   L {..} <- readMutVar levels
   let newAllEdges = if a == b then allEdges else HS.insert (b, a) $ HS.insert (a, b) allEdges
       numEdges = HS.size newAllEdges `div` 2
@@ -73,7 +73,7 @@ link levels a b = do --traceShow (numEdges, VM.length unLevels, HS.member (a, b)
         then return ()
         else do
           (thisEtf, thisEdges) <- VM.read unLevels' 0
-          _m'newEtf <- ET.link thisEtf a b
+          _m'newEtf <- ET.insertEdge thisEtf a b
           -- traceShowM $ (numEdges, m'newEtf)
           -- traceShowM $ (numEdges, "test3")
           let newEdges = HMS.insertWith HS.union a (HS.singleton b) $
@@ -95,8 +95,8 @@ hasEdge levels a b = do
   L {..} <- readMutVar levels
   return $ HS.member (a, b) allEdges
 
-cut :: forall m s v. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m ()
-cut levels a b = do
+deleteEdge :: forall m s v. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m ()
+deleteEdge levels a b = do
   L {..} <- readMutVar levels
   let newAllEdges = HS.delete (a, b) $ HS.delete (b, a) allEdges
   -- | a == b = return Graph {..}
@@ -110,7 +110,7 @@ cut levels a b = do
     go unLevels idx = do
       -- traceShowM ("go", idx)
       (etf, edges) <- VM.read unLevels idx
-      cutResult <- ET.cut etf a b
+      cutResult <- ET.deleteEdge etf a b
       let edges' = HMS.adjust (HS.delete b) a $ HMS.adjust (HS.delete a) b edges
       case cutResult of
         False -> do
@@ -128,7 +128,7 @@ cut levels a b = do
               else do
                 (prevEtf, prevEdges) <- VM.read unLevels (idx + 1)
                 let go' (oldPrevEdges, oldEdges) (c, d) = do
-                      _ <- ET.link prevEtf c d
+                      _ <- ET.insertEdge prevEtf c d
                       return ( HMS.insertWith HS.union d (HS.singleton c) (HMS.insertWith HS.union c (HS.singleton d) oldPrevEdges)
                              , HMS.adjust (HS.delete c) d (HMS.adjust (HS.delete d) c oldEdges)
                              )
@@ -149,8 +149,8 @@ cut levels a b = do
 
     propagateReplacement unLevels idx (c, d) = when (idx >= 0) $ do
       (etf, _) <- VM.read unLevels idx
-      _ <- ET.cut etf a b
-      _ <- ET.link etf c d
+      _ <- ET.deleteEdge etf a b
+      _ <- ET.insertEdge etf c d
       propagateReplacement unLevels (idx - 1) (c, d)
 
     findReplacement ::
@@ -165,7 +165,7 @@ cut levels a b = do
         cConnected <- ET.connected f c other
         if maybe err id cConnected
           then do
-            True <- ET.link f c x
+            True <- ET.insertEdge f c x
             return (Just (c, x), remainingEdges, m'prevEdges)
           else
             findReplacement f

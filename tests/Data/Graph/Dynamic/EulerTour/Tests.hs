@@ -5,13 +5,12 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE BangPatterns #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module Data.Graph.Dynamic.EulerTour.Tests where
 
 import Control.Monad
-import Control.Monad.Primitive (PrimMonad (..))
 import Control.Monad.ST
-import Data.Hashable (Hashable)
 import Data.List
 import Data.Maybe
 import qualified Data.Set as Set
@@ -55,17 +54,17 @@ runSlowForestAction sf@Graph {..} (Query x y) = (sf, Just (Set.member y' $ compo
 
 runForestAction ::
   Int -> ET.Forest s Int -> [Bool] -> Action t -> ST s [Bool]
-runForestAction n etf xs (Cut x y) = ET.cut etf x' y' >> return xs
+runForestAction n etf xs (Cut x y) = ET.deleteEdge etf x' y' >> return xs
   where
     x' = mod x n
     y' = mod y n
-runForestAction n etf xs (Link x y) = ET.link etf x' y' >> return xs
+runForestAction n etf xs (Link x y) = ET.insertEdge etf x' y' >> return xs
   where
     x' = mod x n
     y' = mod y n
 runForestAction n etf xs (Toggle x y) = ET.hasEdge etf x' y' >>= \case
-  True -> ET.cut etf x' y' >> return xs
-  False -> ET.link etf x' y' >> return xs
+  True -> ET.deleteEdge etf x' y' >> return xs
+  False -> ET.insertEdge etf x' y' >> return xs
   where
     x' = mod x n
     y' = mod y n
@@ -87,40 +86,18 @@ checkActions (Positive n) actions = slowResult === result
       results <- foldM (runForestAction n initialForest) [] actions
       return $ reverse results
 
-runProgram
-    :: (Eq v, Hashable v, Show v, PrimMonad m)
-    => ET.Forest (PrimState m) v -> Program v -> m ()
-runProgram f = go (0 :: Int)
-  where
-    go _i [] = return ()
-    go !i (instr : instrs) = do
-
-        let expected ==? actual = when (expected /= actual) $ fail $
-                "Error after " ++ show i ++
-                " instructions, expected " ++ show expected ++
-                " but got " ++ show actual ++ " in instruction " ++
-                show instr
-
-        case instr of
-            InsertVertex x -> ET.insertVertex f x
-            InsertEdge x y expected -> do
-                actual <- ET.link f x y
-                expected ==? actual
-            DeleteVertex x -> ET.deleteVertex f x
-            DeleteEdge x y expected -> do
-                actual <- ET.cut f x y
-                expected ==? actual
-            Connected x y expected -> do
-                actual <- ET.connected f x y
-                expected ==? fromMaybe False actual
-
-        go (i + 1) instrs
-
 prop_forest_linkcut :: Positive Int -> [Action 'LinkCut] -> Property
 prop_forest_linkcut = checkActions
 
 prop_forest_toggle :: Positive Int -> [Action 'Toggl] -> Property
 prop_forest_toggle = checkActions
+
+instance Interpreter ET.Forest where
+    insertVertex    = ET.insertVertex
+    insertEdge      = ET.insertEdge
+    deleteVertex    = ET.deleteVertex
+    deleteEdge      = ET.deleteEdge
+    connected f x y = fromMaybe False <$> ET.connected f x y
 
 prop_program :: IntTreeProgram -> ()
 prop_program (IntTreeProgram p) = runST $ do

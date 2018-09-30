@@ -49,21 +49,21 @@ runSlowGraphAction sf@Graph {..} (Query x y) = (sf, Just (Set.member y' $ compon
 runGraphAction ::
   Int -> Levels.Graph s Int -> [Bool] -> Action t -> ST s [Bool]
 runGraphAction n levels xs (Cut x y) = do
-    Levels.cut levels x' y'
+    Levels.deleteEdge levels x' y'
     return xs
   where
     x' = mod x n
     y' = mod y n
 runGraphAction n levels xs (Link x y) = do
-  Levels.link levels x' y'
+  Levels.insertEdge levels x' y'
   return xs
   where
     x' = mod x n
     y' = mod y n
 runGraphAction n levels xs (Toggle x y) = do
   Levels.hasEdge levels x' y' >>= \case
-    True  -> Levels.cut levels x' y'
-    False -> Levels.link levels x' y'
+    True  -> Levels.deleteEdge levels x' y'
+    False -> Levels.insertEdge levels x' y'
   return xs
   where
     x' = mod x n

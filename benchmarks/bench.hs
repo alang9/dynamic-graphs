@@ -18,10 +18,10 @@ main = defaultMainWith defaultConfig
 completeGraph :: Int -> IO [(Maybe Bool, Maybe Bool)]
 completeGraph n = do
   levels <- Levels.fromVertices [0..n-1]
-  mapM_ (\(x, y) -> Levels.link levels x y) edges
+  mapM_ (\(x, y) -> Levels.insertEdge levels x y) edges
   mapM (\(x, y) -> do
            c1 <- Levels.connected levels x y
-           Levels.cut levels x y
+           Levels.deleteEdge levels x y
            c2 <- Levels.connected levels x y
            return (c1, c2)
        ) edges
@@ -31,10 +31,10 @@ completeGraph n = do
 completeBinaryTree :: Int -> IO [(Maybe Bool, Maybe Bool)]
 completeBinaryTree n = do
   etf <- ETF.discreteForest [0..n-1]
-  mapM_ (\(x, y) -> ETF.link etf x y) edges
+  mapM_ (\(x, y) -> ETF.insertEdge etf x y) edges
   mapM (\(x, y) -> do
            c1 <- ETF.connected etf x y
-           ETF.cut etf x y
+           ETF.deleteEdge etf x y
            c2 <- ETF.connected etf x y
            return (c1, c2)
        ) edges
