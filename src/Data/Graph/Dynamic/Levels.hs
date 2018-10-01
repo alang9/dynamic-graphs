@@ -203,8 +203,10 @@ insertVertex (Graph g) x = do
         updateLevel i
             | i >= VM.length unLevels = return ()
             | otherwise               = do
-                VM.modify unLevels (\(forest, m) ->
-                    (forest, HMS.insertWith HS.union x HS.empty m)) i
+                (forest, m) <- VM.read unLevels i
+                ET.insertVertex forest x
+                VM.write unLevels i (forest, HMS.insertWith HS.union x HS.empty m)
+                updateLevel (i + 1)
 
     updateLevel 0
     writeMutVar g $ l {allEdges = newAllEdges}
@@ -220,8 +222,11 @@ deleteVertex g@(Graph levels) x = do
     let newAllEdges = HMS.delete x (allEdges l1)
         updateLevel i
             | i >= VM.length (unLevels l1) = return ()
-            | otherwise                    =
-                VM.modify (unLevels l1) (\(forest, m) -> (forest, HMS.delete x m)) i
+            | otherwise                    = do
+                (forest, m) <- VM.read (unLevels l1) i
+                ET.deleteVertex forest x
+                VM.write (unLevels l1) i (forest, HMS.delete x m)
+                updateLevel (i + 1)
 
     updateLevel 0
     writeMutVar levels $ l1 {allEdges = newAllEdges}
