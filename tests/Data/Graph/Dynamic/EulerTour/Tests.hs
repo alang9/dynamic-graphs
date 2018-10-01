@@ -93,15 +93,15 @@ prop_forest_toggle :: Positive Int -> [Action 'Toggl] -> Property
 prop_forest_toggle = checkActions
 
 instance Interpreter ET.Forest where
-    insertVertex    = ET.insertVertex
-    insertEdge      = ET.insertEdge
-    deleteVertex    = ET.deleteVertex
-    deleteEdge      = ET.deleteEdge
-    connected f x y = fromMaybe False <$> ET.connected f x y
+    insertVertex     = ET.insertVertex
+    insertEdge f x y = void $ ET.insertEdge f x y
+    deleteVertex     = ET.deleteVertex
+    deleteEdge f x y = void $ ET.deleteEdge f x y
+    connected f x y  = fromMaybe False <$> ET.connected f x y
 
 prop_program :: IntTreeProgram -> ()
 prop_program (IntTreeProgram p) = runST $ do
-    f <- ET.empty
+    f <- ET.new
     runProgram f p
 
 tests :: Test

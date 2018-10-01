@@ -22,9 +22,9 @@ type Program v = [Instruction v]
 
 data Instruction v
     = InsertVertex v
-    | InsertEdge v v Bool
+    | InsertEdge v v
     | DeleteVertex v
-    | DeleteEdge v v Bool
+    | DeleteEdge v v
     | Connected v v Bool
     deriving (Show)
 
@@ -43,7 +43,7 @@ genProgram acyclic size0 graph0 vs0 = do
         [(20, genInsertEdge) | hasVertices] ++
         [(1,  genDeleteVertex) | hasVertices] ++
         [(10, genDeleteEdge) | hasVertices] ++
-        [(10, genConnected) | hasVertices]
+        [(30, genConnected) | hasVertices]
 
     case mbInstruction of
         Nothing -> genProgram acyclic size0 graph0 vs0
@@ -65,8 +65,8 @@ genProgram acyclic size0 graph0 vs0 = do
         if Slow.connected x y graph0 && acyclic then
             return Nothing
         else
-            let (res, graph1) = Slow.insertEdge x y graph0 in
-            return $ Just (InsertEdge x y res, graph1, vs0)
+            let (_, graph1) = Slow.insertEdge x y graph0 in
+            return $ Just (InsertEdge x y, graph1, vs0)
 
     genDeleteVertex = do
         v <- QC.elements $ Slow.vertices graph0
@@ -80,8 +80,8 @@ genProgram acyclic size0 graph0 vs0 = do
             return Nothing
         else do
             y <- QC.elements nbs
-            let (res, graph1) = Slow.deleteEdge x y graph0
-            return $ Just (DeleteEdge x y res, graph1, vs0)
+            let (_, graph1) = Slow.deleteEdge x y graph0
+            return $ Just (DeleteEdge x y, graph1, vs0)
 
     genConnected = do
         x <- QC.elements $ Slow.vertices graph0
@@ -96,13 +96,13 @@ class Interpreter f where
         => f (PrimState m) v -> v -> m ()
     insertEdge
         :: (Eq v, Hashable v, PrimMonad m)
-        => f (PrimState m) v -> v -> v -> m Bool
+        => f (PrimState m) v -> v -> v -> m ()
     deleteVertex
         :: (Eq v, Hashable v, PrimMonad m)
         => f (PrimState m) v -> v -> m ()
     deleteEdge
         :: (Eq v, Hashable v, PrimMonad m)
-        => f (PrimState m) v -> v -> v -> m Bool
+        => f (PrimState m) v -> v -> v -> m ()
     connected
         :: (Eq v, Hashable v, PrimMonad m)
         => f (PrimState m) v -> v -> v -> m Bool
@@ -115,24 +115,18 @@ runProgram f = go (0 :: Int)
     go _i [] = return ()
     go !i (instr : instrs) = do
 
-        let expected ==? actual = when (expected /= actual) $ fail $
-                "Error after " ++ show i ++
-                " instructions, expected " ++ show expected ++
-                " but got " ++ show actual ++ " in instruction " ++
-                show instr
-
         case instr of
             InsertVertex x -> insertVertex f x
-            InsertEdge x y expected -> do
-                actual <- insertEdge f x y
-                expected ==? actual
+            InsertEdge x y -> insertEdge f x y
             DeleteVertex x -> deleteVertex f x
-            DeleteEdge x y expected -> do
-                actual <- deleteEdge f x y
-                expected ==? actual
+            DeleteEdge x y -> deleteEdge f x y
             Connected x y expected -> do
                 actual <- connected f x y
-                expected ==? actual
+                when (expected /= actual) $ fail $
+                    "Error after " ++ show i ++
+                    " instructions, expected " ++ show expected ++
+                    " but got " ++ show actual ++ " in instruction " ++
+                    show instr
 
         go (i + 1) instrs
 

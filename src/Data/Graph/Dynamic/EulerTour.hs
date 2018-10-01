@@ -13,7 +13,7 @@ module Data.Graph.Dynamic.EulerTour
       Forest
 
       -- * Construction
-    , empty
+    , new
     , fromTree
     , discreteForest
 
@@ -81,15 +81,15 @@ deleteTree (ETF ht) x y = do
             let m1 = HMS.delete y m0 in
             if HMS.null m1 then HT.delete ht x else HT.insert ht x m1
 
-empty :: (PrimMonad m, s ~ PrimState m) => m (Forest s v)
-empty = ETF <$> HT.new
+new :: (PrimMonad m, s ~ PrimState m) => m (Forest s v)
+new = ETF <$> HT.new
 
 -- values in nodes must be unique
 fromTree
     :: forall v m s. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
     => Tree.Tree v -> m (Forest s v)
 fromTree tree = do
-    etf <- empty
+    etf <- new
     _ <- go etf tree
     return etf
   where
@@ -112,7 +112,7 @@ discreteForest
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
     => [v] -> m (Forest s v)
 discreteForest vs = do
-    etf <- empty
+    etf <- new
     forM_ vs $ \v -> do
         node <- Splay.singleton (v, v) (Sum 1)
         insertTree etf v v node

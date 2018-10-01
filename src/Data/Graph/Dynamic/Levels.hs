@@ -13,6 +13,7 @@ module Data.Graph.Dynamic.Levels
       Graph
 
       -- * Construction
+    , new
     , fromVertices
 
       -- * Queries
@@ -22,6 +23,8 @@ module Data.Graph.Dynamic.Levels
       -- * Modifying
     , insertEdge
     , deleteEdge
+    , insertVertex
+    , deleteVertex
     ) where
 
 import           Control.Monad
@@ -30,6 +33,7 @@ import           Data.Bits
 import           Data.Hashable                     (Hashable)
 import qualified Data.HashMap.Strict               as HMS
 import qualified Data.HashSet                      as HS
+import           Data.Maybe                        (fromMaybe)
 import           Data.Primitive.MutVar
 import qualified Data.Vector.Mutable               as VM
 
@@ -42,10 +46,13 @@ data L s v = L
   , unLevels :: !(VM.MVector s (ET.Forest s v, HMS.HashMap v (HS.HashSet v)))
   }
 
-type Graph s v = MutVar s (L s v)
+newtype Graph s v = Graph (MutVar s (L s v))
 
 logBase2 :: Int -> Int
 logBase2 x = finiteBitSize x - 1 - countLeadingZeros x
+
+new :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => m (Graph s v)
+new = fromVertices []
 
 fromVertices
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => [v] -> m (Graph s v)
@@ -53,11 +60,11 @@ fromVertices xs = do
   unLevels <- VM.new 0
   let allEdges = HMS.fromList $ zip xs $ repeat HS.empty
       numEdges = 0
-  newMutVar L {..}
+  Graph <$> newMutVar L {..}
 
 -- TODO (jaspervdj): Kill Ord constraints in this module
 insertEdge :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m ()
-insertEdge levels a b = do --traceShow (numEdges, VM.length unLevels, HS.member (a, b) allEdges) $
+insertEdge (Graph levels) a b = do --traceShow (numEdges, VM.length unLevels, HS.member (a, b) allEdges) $
   L {..} <- readMutVar levels
   let newAllEdges =
             HMS.insertWith HS.union a (HS.singleton b) $
@@ -92,21 +99,22 @@ insertEdge levels a b = do --traceShow (numEdges, VM.length unLevels, HS.member 
               {allEdges = newAllEdges, unLevels = unLevels',numEdges = newNumEdges}
 
 connected :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m (Maybe Bool)
-connected levels a b = do
+connected _ a b | a == b = return (Just True)
+connected (Graph levels) a b = do
   L {..} <- readMutVar levels
   if VM.null unLevels
-    then return $ Just $ a == b
+    then return (Just False)
     else do
       (etf, _) <- VM.read unLevels 0
       ET.connected etf a b
 
 hasEdge :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m Bool
-hasEdge levels a b = do
+hasEdge (Graph levels) a b = do
   L {..} <- readMutVar levels
   return $ maybe False (b `HS.member`) (HMS.lookup a allEdges)
 
 deleteEdge :: forall m s v. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m ()
-deleteEdge levels a b = do
+deleteEdge (Graph levels) a b = do
   L {..} <- readMutVar levels
   let newAllEdges = HMS.adjust (HS.delete a) b $ HMS.adjust (HS.delete b) a allEdges
   -- | a == b = return Graph {..}
@@ -187,3 +195,33 @@ deleteEdge levels a b = do
         xEdges = maybe HS.empty id $ HMS.lookup x remainingEdges
         err = error "delete.findReplacement: invalid state"
 
+insertVertex
+    :: (Eq v, Hashable v, PrimMonad m) => Graph (PrimState m) v -> v -> m ()
+insertVertex (Graph g) x = do
+    l@L {..} <- readMutVar g
+    let newAllEdges   = HMS.insertWith HS.union x HS.empty allEdges
+        updateLevel i
+            | i >= VM.length unLevels = return ()
+            | otherwise               = do
+                VM.modify unLevels (\(forest, m) ->
+                    (forest, HMS.insertWith HS.union x HS.empty m)) i
+
+    updateLevel 0
+    writeMutVar g $ l {allEdges = newAllEdges}
+
+deleteVertex
+    :: (Eq v, Hashable v, PrimMonad m) => Graph (PrimState m) v -> v -> m ()
+deleteVertex g@(Graph levels) x = do
+    l0 <- readMutVar levels
+    let neighbours = fromMaybe HS.empty (HMS.lookup x (allEdges l0))
+    forM_ neighbours $ \y -> deleteEdge g x y
+
+    l1 <- readMutVar levels
+    let newAllEdges = HMS.delete x (allEdges l1)
+        updateLevel i
+            | i >= VM.length (unLevels l1) = return ()
+            | otherwise                    =
+                VM.modify (unLevels l1) (\(forest, m) -> (forest, HMS.delete x m)) i
+
+    updateLevel 0
+    writeMutVar levels $ l1 {allEdges = newAllEdges}
