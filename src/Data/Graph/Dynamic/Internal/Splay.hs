@@ -191,18 +191,21 @@ rotateLeft pv xv = do
     when (tLeft x0 /= xv) $ MutVar.modifyMutVar' (tLeft x0) $ \l ->
         l {tParent = pv}
 
-    MutVar.modifyMutVar' xv $ \x -> x
+    MutVar.writeMutVar xv $! x0
         { tAgg    = tAgg p0
         , tLeft   = pv
         , tParent = if gpv == pv then xv else gpv
         }
 
-    MutVar.modifyMutVar' pv $ \p -> p
+    let plv = tLeft p0
+    pla <- if plv == pv then return mempty else tAgg <$> MutVar.readMutVar plv
+    pra <- if tLeft x0 == xv then return mempty else tAgg <$> MutVar.readMutVar (tLeft x0)
+
+    MutVar.writeMutVar pv $! p0
         { tRight  = if tLeft x0 == xv then pv else tLeft x0
         , tParent = xv
+        , tAgg    = pla <> tValue p0 <> pra
         }
-
-    updateAggregate pv
 
 rotateRight pv xv = do
     p0 <- MutVar.readMutVar pv
@@ -215,18 +218,21 @@ rotateRight pv xv = do
     when (tRight x0 /= xv) $ MutVar.modifyMutVar' (tRight x0) $ \l ->
         l {tParent = pv}
 
-    MutVar.modifyMutVar' xv $ \x -> x
+    MutVar.writeMutVar xv $! x0
         { tAgg    = tAgg p0
         , tRight  = pv
         , tParent = if gpv == pv then xv else gpv
         }
 
-    MutVar.modifyMutVar' pv $ \p -> p
+    let prv = tRight p0
+    pla <- if tRight x0 == xv then return mempty else tAgg <$> MutVar.readMutVar (tRight x0)
+    pra <- if prv == pv then return mempty else tAgg <$> MutVar.readMutVar prv
+
+    MutVar.writeMutVar pv $! p0
         { tLeft   = if tRight x0 == xv then pv else tRight x0
         , tParent = xv
+        , tAgg    = pla <> tValue p0 <> pra
         }
-
-    updateAggregate pv
 
 setLeft, setRight
     :: PrimMonad m
