@@ -5,6 +5,7 @@
 -- minimum spanning tree, 2-edge, and biconnectivity/ by /Jacob Holm, Kristian
 -- de Lichtenberg and Mikkel Thorup/ (1998).
 {-# LANGUAGE GADTs               #-}
+{-# LANGUAGE BangPatterns               #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -128,12 +129,12 @@ deleteEdge (Graph levels) a b = do
     go :: VM.MVector s (ET.Forest s v, HMS.HashMap v (HS.HashSet v)) -> Int -> m Bool
     go unLevels idx = do
       -- traceShowM ("go", idx)
-      (etf, edges) <- VM.read unLevels idx
+      (etf, edges0) <- VM.read unLevels idx
       cutResult <- ET.deleteEdge etf a b
-      let edges' = HMS.adjust (HS.delete b) a $ HMS.adjust (HS.delete a) b edges
+      let !edges1 = HMS.adjust (HS.delete b) a $ HMS.adjust (HS.delete a) b edges0
       case cutResult of
         False -> do
-          VM.write unLevels idx (etf, edges')
+          VM.write unLevels idx (etf, edges1)
           if idx > 0 then go unLevels (idx - 1) else return False
         True -> do
           aSize <- ET.componentSize etf a
@@ -141,21 +142,21 @@ deleteEdge (Graph levels) a b = do
           let (smaller, bigger) = if aSize <= bSize then (a, b) else (b, a)
           Just sRoot <- ET.findRoot etf smaller
           sEdges <- Splay.toList sRoot
-          (edges'', mPrevEdges) <- do
+          (edges2, mPrevEdges) <- do
             if not (idx + 1 < VM.length unLevels)
-              then return (edges', Nothing)
+              then return (edges1, Nothing)
               else do
                 (prevEtf, prevEdges) <- VM.read unLevels (idx + 1)
-                let go' (oldPrevEdges, oldEdges) (c, d) = do
+                let go' !(!oldPrevEdges, !oldEdges) (c, d) = do
                       _ <- ET.insertEdge prevEtf c d
                       return ( HMS.insertWith HS.union d (HS.singleton c) (HMS.insertWith HS.union c (HS.singleton d) oldPrevEdges)
                              , HMS.adjust (HS.delete c) d (HMS.adjust (HS.delete d) c oldEdges)
                              )
-                (newPrevEdges, newEdges) <- foldM go' (prevEdges, edges') sEdges
+                !(!newPrevEdges, !newEdges) <- foldM go' (prevEdges, edges1) sEdges
                 VM.write unLevels (idx + 1) (prevEtf, newPrevEdges)
                 return (newEdges, Just newPrevEdges)
           let sVertices = map fst $ filter (uncurry (==)) sEdges
-          (replacementEdge, newEdges, m'newPrevEdges) <- findReplacement etf edges'' mPrevEdges bigger sVertices
+          (replacementEdge, newEdges, m'newPrevEdges) <- findReplacement etf edges2 mPrevEdges bigger sVertices
           -- traceShowM ("delete", idx, VM.length unLevels, edges, edges'', newEdges, bigger, sVertices)
           -- traceShowM ("delete", idx)
           VM.write unLevels idx (etf, newEdges)
