@@ -36,7 +36,7 @@ data Tree' s a v = Tree
     , tRight  :: {-# UNPACK #-} !(Tree s a v)
     , tLabel  :: !a
     , tValue  :: !v
-    , tAgg    :: {-# UNPACK #-} !v
+    , tAgg    :: !v
     }
 
 -- instance Eq (Tree s a v) where
@@ -48,7 +48,7 @@ type Tree s a v = MutVar s (Tree' s a v)
 singleton :: PrimMonad m => a -> v -> m (Tree (PrimState m) a v)
 singleton tLabel tValue = do
     tree <- MutVar.newMutVar undefined
-    MutVar.writeMutVar tree $ Tree tree tree tree tLabel tValue tValue
+    MutVar.writeMutVar tree $! Tree tree tree tree tLabel tValue tValue
     return tree
 
 getRoot :: PrimMonad m => Tree (PrimState m) a v -> m (Tree (PrimState m) a v)
@@ -180,26 +180,53 @@ rotateLeft, rotateRight
     => Tree (PrimState m) a v  -- X's parent
     -> Tree (PrimState m) a v  -- X
     -> m ()
-rotateLeft p x = do
-    p' <- MutVar.readMutVar p
-    let pa = tAgg p'
-    b <- tLeft <$> MutVar.readMutVar x
-    if b == x then removeRight p else setRight p b
-    let gp = tParent p'
-    if gp == p then removeParent x else replace gp p x
-    setLeft x p
-    MutVar.modifyMutVar' x $ \x' -> x' {tAgg = pa}
-    updateAggregate p
-rotateRight p x = do
-    p' <- MutVar.readMutVar p
-    let pa = tAgg p'
-    b <- tRight <$> MutVar.readMutVar x
-    if b == x then removeLeft p else setLeft p b
-    let gp = tParent p'
-    if gp == p then removeParent x else replace gp p x
-    setRight x p
-    MutVar.modifyMutVar' x $ \x' -> x' {tAgg = pa}
-    updateAggregate p
+rotateLeft pv xv = do
+    p0 <- MutVar.readMutVar pv
+    x0 <- MutVar.readMutVar xv
+    let gpv = tParent p0
+
+    when (gpv /= pv) $ MutVar.modifyMutVar' gpv $ \gp ->
+        if tLeft gp == pv then gp {tLeft = xv} else gp {tRight = xv}
+
+    when (tLeft x0 /= xv) $ MutVar.modifyMutVar' (tLeft x0) $ \l ->
+        l {tParent = pv}
+
+    MutVar.modifyMutVar' xv $ \x -> x
+        { tAgg    = tAgg p0
+        , tLeft   = pv
+        , tParent = if gpv == pv then xv else gpv
+        }
+
+    MutVar.modifyMutVar' pv $ \p -> p
+        { tRight  = if tLeft x0 == xv then pv else tLeft x0
+        , tParent = xv
+        }
+
+    updateAggregate pv
+
+rotateRight pv xv = do
+    p0 <- MutVar.readMutVar pv
+    x0 <- MutVar.readMutVar xv
+    let gpv = tParent p0
+
+    when (gpv /= pv) $ MutVar.modifyMutVar' gpv $ \gp ->
+        if tLeft gp == pv then gp {tLeft = xv} else gp {tRight = xv}
+
+    when (tRight x0 /= xv) $ MutVar.modifyMutVar' (tRight x0) $ \l ->
+        l {tParent = pv}
+
+    MutVar.modifyMutVar' xv $ \x -> x
+        { tAgg    = tAgg p0
+        , tRight  = pv
+        , tParent = if gpv == pv then xv else gpv
+        }
+
+    MutVar.modifyMutVar' pv $ \p -> p
+        { tLeft   = if tRight x0 == xv then pv else tRight x0
+        , tParent = xv
+        }
+
+    updateAggregate pv
 
 setLeft, setRight
     :: PrimMonad m
@@ -221,21 +248,6 @@ removeParent x = MutVar.modifyMutVar' x $ \x' -> x' {tParent = x}
 removeLeft   x = MutVar.modifyMutVar' x $ \x' -> x' {tLeft = x}
 removeRight  x = MutVar.modifyMutVar' x $ \x' -> x' {tRight = x}
 
--- | Replace X by Y in the tree.  X must have a parent.
-replace
-    :: PrimMonad m
-    => Tree (PrimState m) a v  -- ^ X's parent
-    -> Tree (PrimState m) a v  -- ^ X
-    -> Tree (PrimState m) a v  -- ^ Y
-    -> m ()
-replace p x y = do
-    p' <- MutVar.readMutVar p
-    let pl = tLeft p'
-    MutVar.modifyMutVar' y $ \y' -> y' {tParent = p}
-    if pl == x
-        then MutVar.writeMutVar p $ p' {tLeft = y}
-        else MutVar.writeMutVar p $ p' {tRight = y}
-
 -- | Recompute the aggregate of a node.
 updateAggregate
     :: (Monoid v, PrimMonad m)
@@ -248,7 +260,7 @@ updateAggregate t = do
     let r = tRight t'
     ra <- if r == t then return mempty else tAgg <$> MutVar.readMutVar r
     let !agg = la <> tValue t' <> ra
-    MutVar.writeMutVar t $ t' {tAgg = agg}
+    MutVar.writeMutVar t $! t' {tAgg = agg}
 
 -- | For debugging/testing.
 freeze :: PrimMonad m => Tree (PrimState m) a v -> m (Tree.Tree a)
