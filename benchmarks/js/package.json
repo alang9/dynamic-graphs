@@ -1,0 +1,15 @@
+{
+  "name": "bench-js",
+  "version": "0.0.1",
+  "description": "JavaScript benchmark for dynamic connectivity",
+  "repository": "git@github.com:alang9/dynamic-connectivity.git",
+  "main": "index.js",
+  "scripts": {
+    "bench": "node index.js"
+  },
+  "dependencies": {
+    "dynamic-forest": "1.0.0"
+  },
+  "author": "Jasper Van der Jeugt",
+  "license": "BSD-3-Clause"
+}
