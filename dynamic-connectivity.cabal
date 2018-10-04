@@ -20,6 +20,7 @@ library
   exposed-modules:
     Data.Graph.Dynamic.EulerTour
     Data.Graph.Dynamic.Levels
+    Data.Graph.Dynamic.Thorup2000
 
     Data.Graph.Dynamic.Internal.Avl
     Data.Graph.Dynamic.Internal.BitVector
