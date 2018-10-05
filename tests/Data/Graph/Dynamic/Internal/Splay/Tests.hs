@@ -58,13 +58,13 @@ appendsToList :: Appends a v -> [a]
 appendsToList (Singleton a _) = [a]
 appendsToList (Append l r)    = appendsToList l ++ appendsToList r
 
-prop_append :: Appends Int (Sum Int) -> Bool
+prop_append :: Appends Int (Sum Int) -> QC.Property
 prop_append appends = runST $ do
     (t, _) <- appendsToTree appends
     Splay.assertInvariants t
 
     l <- Splay.toList t
-    return $ l == appendsToList appends
+    return $ l QC.=== appendsToList appends
 
 tests :: Test
 tests = $(testGroupGenerator)

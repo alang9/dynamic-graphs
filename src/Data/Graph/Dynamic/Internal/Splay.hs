@@ -29,35 +29,32 @@ import qualified Data.Primitive.MutVar   as MutVar
 import qualified Data.Tree               as Tree
 import           Prelude                 hiding (concat, print)
 
-data Tree s a v = Tree
-    { tParent :: {-# UNPACK #-} !(MutVar s (Tree s a v))
-    , tLeft   :: {-# UNPACK #-} !(MutVar s (Tree s a v))
-    , tRight  :: {-# UNPACK #-} !(MutVar s (Tree s a v))
+
+data Tree' s a v = Tree
+    { tParent :: {-# UNPACK #-} !(Tree s a v)
+    , tLeft   :: {-# UNPACK #-} !(Tree s a v)
+    , tRight  :: {-# UNPACK #-} !(Tree s a v)
     , tLabel  :: !a
     , tValue  :: !v
-    , tAgg    :: {-# UNPACK #-} !(MutVar s v)
+    , tAgg    :: !v
     }
 
-instance Eq (Tree s a v) where
-    -- Reference equality through a MutVar.
-    t1 == t2 = tParent t1 == tParent t2
+-- instance Eq (Tree s a v) where
+--     -- Reference equality through a MutVar.
+--     t1 == t2 = tParent t1 == tParent t2
+
+type Tree s a v = MutVar s (Tree' s a v)
 
 singleton :: PrimMonad m => a -> v -> m (Tree (PrimState m) a v)
 singleton tLabel tValue = do
-    tParent <- MutVar.newMutVar undefined
-    tLeft   <- MutVar.newMutVar undefined
-    tRight  <- MutVar.newMutVar undefined
-    tAgg    <- MutVar.newMutVar tValue
-    let tree = Tree {..}
-    MutVar.writeMutVar tParent tree
-    MutVar.writeMutVar tLeft   tree
-    MutVar.writeMutVar tRight  tree
+    tree <- MutVar.newMutVar undefined
+    MutVar.writeMutVar tree $! Tree tree tree tree tLabel tValue tValue
     return tree
 
 getRoot :: PrimMonad m => Tree (PrimState m) a v -> m (Tree (PrimState m) a v)
-getRoot tree@Tree {..} = do
-    parent <- MutVar.readMutVar tParent
-    if parent == tree then return tree else getRoot parent
+getRoot tree = do
+    Tree{..} <- MutVar.readMutVar tree
+    if tParent == tree then return tree else getRoot tParent
 
 -- | Appends two trees.  Returns the root of the tree.
 append
@@ -86,15 +83,14 @@ split
     -> m (Maybe (Tree (PrimState m) a v), Maybe (Tree (PrimState m) a v))
 split x = do
     _ <- splay x
-    l <- MutVar.readMutVar (tLeft x)
-    r <- MutVar.readMutVar (tRight x)
-    removeParent l  -- Works even if l is x
-    removeParent r
+    Tree{..} <- MutVar.readMutVar x
+    removeParent tLeft  -- Works even if l is x
+    removeParent tRight
     removeLeft  x
     removeRight x
     return
-        ( if l == x then Nothing else Just l
-        , if r == x then Nothing else Just r
+        ( if tLeft == x then Nothing else Just tLeft
+        , if tRight == x then Nothing else Just tRight
         )
 
 connected
@@ -119,19 +115,18 @@ aggregate
     :: (PrimMonad m, Monoid v)
     => Tree (PrimState m) a v
     -> m v
-aggregate x = MutVar.readMutVar (tAgg x)
+aggregate x = tAgg <$> MutVar.readMutVar x
 
 -- | For debugging/testing.
 toList
     :: PrimMonad m => Tree (PrimState m) a v -> m [a]
 toList = go []
   where
-    go acc0 tree@Tree {..} = do
-        left   <- MutVar.readMutVar tLeft
-        right  <- MutVar.readMutVar tRight
-        acc1   <- if right == tree then return acc0 else go acc0 right
+    go acc0 tree = do
+        Tree{..} <- MutVar.readMutVar tree
+        acc1   <- if tRight == tree then return acc0 else go acc0 tRight
         let acc2 = tLabel : acc1
-        if left  == tree then return acc2 else go acc2 left
+        if tLeft  == tree then return acc2 else go acc2 tLeft
 
 splay
     :: (PrimMonad m, Monoid v)
@@ -140,18 +135,19 @@ splay
 splay x0 = go x0 x0
   where
     go closestToRootFound x = do
-        p <- MutVar.readMutVar (tParent x)
-        if p == x then
+        p <- tParent <$> MutVar.readMutVar x
+        if p == x then do
             return closestToRootFound
         else do
-            gp <- MutVar.readMutVar (tParent p)
-            lp <- MutVar.readMutVar (tLeft p)
+            p' <- MutVar.readMutVar p
+            let gp = tParent p'
+            let lp = tLeft p'
             if gp == p
                 then do
                     -- ZIG
                     if lp == x then rotateRight p x else rotateLeft p x
                 else do
-                    lgp <- MutVar.readMutVar (tLeft gp)
+                    lgp <- tLeft <$> MutVar.readMutVar gp
                     if  | lp == x && lgp == p -> do
                             -- ZIGZIG
                             rotateRight gp p
@@ -175,8 +171,8 @@ getRightMost
     :: PrimMonad m
     => Tree (PrimState m) a v
     -> m (Tree (PrimState m) a v)
-getRightMost t@Tree {..} = do
-    tr <- MutVar.readMutVar tRight
+getRightMost t = do
+    tr <- tRight <$> MutVar.readMutVar t
     if t == tr then return t else getRightMost tr
 
 rotateLeft, rotateRight
@@ -184,24 +180,59 @@ rotateLeft, rotateRight
     => Tree (PrimState m) a v  -- X's parent
     -> Tree (PrimState m) a v  -- X
     -> m ()
-rotateLeft p x = do
-    pa <- MutVar.readMutVar (tAgg p)
-    b  <- MutVar.readMutVar (tLeft x)
-    if b == x then removeRight p else setRight p b
-    gp <- MutVar.readMutVar (tParent p)
-    if gp == p then removeParent x else replace gp p x
-    setLeft x p
-    MutVar.writeMutVar (tAgg x) pa
-    updateAggregate p
-rotateRight p x = do
-    pa <- MutVar.readMutVar (tAgg p)
-    b  <- MutVar.readMutVar (tRight x)
-    if b == x then removeLeft p else setLeft p b
-    gp <- MutVar.readMutVar (tParent p)
-    if gp == p then removeParent x else replace gp p x
-    setRight x p
-    MutVar.writeMutVar (tAgg x) pa
-    updateAggregate p
+rotateLeft pv xv = do
+    p0 <- MutVar.readMutVar pv
+    x0 <- MutVar.readMutVar xv
+    let gpv = tParent p0
+
+    when (gpv /= pv) $ MutVar.modifyMutVar' gpv $ \gp ->
+        if tLeft gp == pv then gp {tLeft = xv} else gp {tRight = xv}
+
+    when (tLeft x0 /= xv) $ MutVar.modifyMutVar' (tLeft x0) $ \l ->
+        l {tParent = pv}
+
+    MutVar.writeMutVar xv $! x0
+        { tAgg    = tAgg p0
+        , tLeft   = pv
+        , tParent = if gpv == pv then xv else gpv
+        }
+
+    let plv = tLeft p0
+    pla <- if plv == pv then return mempty else tAgg <$> MutVar.readMutVar plv
+    pra <- if tLeft x0 == xv then return mempty else tAgg <$> MutVar.readMutVar (tLeft x0)
+
+    MutVar.writeMutVar pv $! p0
+        { tRight  = if tLeft x0 == xv then pv else tLeft x0
+        , tParent = xv
+        , tAgg    = pla <> tValue p0 <> pra
+        }
+
+rotateRight pv xv = do
+    p0 <- MutVar.readMutVar pv
+    x0 <- MutVar.readMutVar xv
+    let gpv = tParent p0
+
+    when (gpv /= pv) $ MutVar.modifyMutVar' gpv $ \gp ->
+        if tLeft gp == pv then gp {tLeft = xv} else gp {tRight = xv}
+
+    when (tRight x0 /= xv) $ MutVar.modifyMutVar' (tRight x0) $ \l ->
+        l {tParent = pv}
+
+    MutVar.writeMutVar xv $! x0
+        { tAgg    = tAgg p0
+        , tRight  = pv
+        , tParent = if gpv == pv then xv else gpv
+        }
+
+    let prv = tRight p0
+    pla <- if tRight x0 == xv then return mempty else tAgg <$> MutVar.readMutVar (tRight x0)
+    pra <- if prv == pv then return mempty else tAgg <$> MutVar.readMutVar prv
+
+    MutVar.writeMutVar pv $! p0
+        { tLeft   = if tRight x0 == xv then pv else tRight x0
+        , tParent = xv
+        , tAgg    = pla <> tValue p0 <> pra
+        }
 
 setLeft, setRight
     :: PrimMonad m
@@ -209,33 +240,19 @@ setLeft, setRight
     -> Tree (PrimState m) a v  -- New child
     -> m ()
 setLeft p x = do
-    MutVar.writeMutVar (tParent x) p
-    MutVar.writeMutVar (tLeft p) x
+    MutVar.modifyMutVar' x $ \x' -> x' {tParent = p}
+    MutVar.modifyMutVar' p $ \p' -> p' {tLeft = x}
 setRight p x = do
-    MutVar.writeMutVar (tParent x) p
-    MutVar.writeMutVar (tRight p) x
+    MutVar.modifyMutVar' x $ \x' -> x' {tParent = p}
+    MutVar.modifyMutVar' p $ \p' -> p' {tRight = x}
 
 removeParent, removeLeft, removeRight
     :: PrimMonad m
     => Tree (PrimState m) a v -- Parent
     -> m ()
-removeParent x = MutVar.writeMutVar (tParent x) x
-removeLeft   x = MutVar.writeMutVar (tLeft x)   x
-removeRight  x = MutVar.writeMutVar (tRight x)  x
-
--- | Replace X by Y in the tree.  X must have a parent.
-replace
-    :: PrimMonad m
-    => Tree (PrimState m) a v  -- ^ X's parent
-    -> Tree (PrimState m) a v  -- ^ X
-    -> Tree (PrimState m) a v  -- ^ Y
-    -> m ()
-replace p x y = do
-    pl <- MutVar.readMutVar (tLeft p)
-    MutVar.writeMutVar (tParent y) p
-    if pl == x
-        then MutVar.writeMutVar (tLeft p) y
-        else MutVar.writeMutVar (tRight p) y
+removeParent x = MutVar.modifyMutVar' x $ \x' -> x' {tParent = x}
+removeLeft   x = MutVar.modifyMutVar' x $ \x' -> x' {tLeft = x}
+removeRight  x = MutVar.modifyMutVar' x $ \x' -> x' {tRight = x}
 
 -- | Recompute the aggregate of a node.
 updateAggregate
@@ -243,34 +260,33 @@ updateAggregate
     => Tree (PrimState m) a v
     -> m ()
 updateAggregate t = do
-    l  <- MutVar.readMutVar (tLeft t)
-    la <- if l == t then return mempty else MutVar.readMutVar (tAgg l)
-    r  <- MutVar.readMutVar (tRight t)
-    ra <- if r == t then return mempty else MutVar.readMutVar (tAgg r)
-    let !agg = la <> tValue t <> ra
-    MutVar.writeMutVar (tAgg t) agg
+    t' <- MutVar.readMutVar t
+    let l = tLeft t'
+    la <- if l == t then return mempty else tAgg <$> MutVar.readMutVar l
+    let r = tRight t'
+    ra <- if r == t then return mempty else tAgg <$> MutVar.readMutVar r
+    let !agg = la <> tValue t' <> ra
+    MutVar.writeMutVar t $! t' {tAgg = agg}
 
 -- | For debugging/testing.
 freeze :: PrimMonad m => Tree (PrimState m) a v -> m (Tree.Tree a)
-freeze tree@Tree {..} = do
-    left  <- MutVar.readMutVar tLeft
-    right <- MutVar.readMutVar tRight
+freeze tree = do
+    Tree {..} <- MutVar.readMutVar tree
     children  <- sequence $
-        [freeze left  | left /= tree] ++
-        [freeze right | right /= tree]
+        [freeze tLeft | tLeft /= tree] ++
+        [freeze tRight | tRight /= tree]
     return $ Tree.Node tLabel children
 
 print :: Show a => Tree (PrimState IO) a v -> IO ()
 print = go 0
   where
-    go d t@Tree {..} = do
-        left <- MutVar.readMutVar tLeft
-        when (left /= t) $ go (d + 1) left
+    go d t = do
+        Tree{..} <- MutVar.readMutVar t
+        when (tLeft /= t) $ go (d + 1) tLeft
 
         putStrLn $ replicate d ' ' ++ show tLabel
 
-        right <- MutVar.readMutVar tRight
-        when (right /= t) $ go (d + 1) right
+        when (tRight /= t) $ go (d + 1) tRight
 
 assertInvariants
     :: (PrimMonad m, Monoid v, Eq v, Show v) => Tree (PrimState m) a v -> m ()
@@ -280,16 +296,17 @@ assertInvariants t = do
   where
     -- TODO: Check average
     computeAgg p x = do
-        p' <- MutVar.readMutVar (tParent x)
+        x' <- MutVar.readMutVar x
+        let p' = tParent x'
         when (p /= p') $ fail "broken parent pointer"
 
-        l <- MutVar.readMutVar (tLeft x)
-        r <- MutVar.readMutVar (tRight x)
+        let l = tLeft x'
+        let r = tRight x'
         la <- if l == x then return mempty else computeAgg x l
         ra <- if r == x then return mempty else computeAgg x r
 
-        let actualAgg = la <> (tValue x) <> ra
-        storedAgg <- MutVar.readMutVar (tAgg x)
+        let actualAgg = la <> (tValue x') <> ra
+        let storedAgg = tAgg x'
 
         when (actualAgg /= storedAgg) $ fail $
             "error in stored aggregates: " ++ show storedAgg ++
