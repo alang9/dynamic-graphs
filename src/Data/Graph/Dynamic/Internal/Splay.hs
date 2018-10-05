@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns    #-}
 {-# LANGUAGE MultiWayIf      #-}
 {-# LANGUAGE RecordWildCards #-}
 module Data.Graph.Dynamic.Internal.Splay
@@ -132,40 +133,276 @@ splay
     :: (PrimMonad m, Monoid v)
     => Tree (PrimState m) a v
     -> m (Tree (PrimState m) a v)  -- Returns the old root.
-splay x0 = go x0 x0
+splay xv = do
+    -- Note (jaspervdj): Rather than repeatedly reading from/writing to xv we
+    -- read x once and thread its (continuously updated) value through the
+    -- entire stack of `go` calls.
+    --
+    -- The same is true for the left and right aggregates of x: they can be
+    -- passed upwards rather than recomputed.
+    x0 <- MutVar.readMutVar xv
+    xla <- if tLeft x0 == xv then return mempty else tAgg <$> MutVar.readMutVar (tLeft x0)
+    xra <- if tRight x0 == xv then return mempty else tAgg <$> MutVar.readMutVar (tRight x0)
+    go xv xla xra x0
   where
-    go closestToRootFound x = do
-        p <- tParent <$> MutVar.readMutVar x
-        if p == x then do
+    go closestToRootFound xla xra !x = do
+        let !pv = tParent x
+        if pv == xv then do
+            MutVar.writeMutVar xv x
             return closestToRootFound
         else do
-            p' <- MutVar.readMutVar p
-            let gp = tParent p'
-            let lp = tLeft p'
-            if gp == p
-                then do
-                    -- ZIG
-                    if lp == x then rotateRight p x else rotateLeft p x
-                else do
-                    lgp <- tLeft <$> MutVar.readMutVar gp
-                    if  | lp == x && lgp == p -> do
-                            -- ZIGZIG
-                            rotateRight gp p
-                            rotateRight p x
-                        | lp /= x && lgp /= p -> do
-                            -- ZIGZIG
-                            rotateLeft gp p
-                            rotateLeft p x
-                        | lp == x -> do
-                            -- ZIGZAG
-                            rotateRight p x
-                            rotateLeft gp x
-                        | otherwise -> do
-                            -- ZIGZAG
-                            rotateLeft p x
-                            rotateRight gp x
+            p <- MutVar.readMutVar pv
+            let gv = tParent p
+            let plv = tLeft p
+            let prv = tRight p
+            let xlv = tLeft x
+            let xrv = tRight x
+            if  | gv == pv, plv == xv -> do
+                    -- ZIG (Right)
+                    --
+                    --    p  =>  x
+                    --   /        \
+                    --  x          p
+                    --   \        /
+                    --    xr     xr
+                    --
+                    when (xrv /= xv) $ MutVar.modifyMutVar' xrv $ \xr ->
+                        xr {tParent = pv}
 
-            go gp x
+                    pra <- if prv == pv then return mempty else tAgg <$> MutVar.readMutVar prv
+
+                    MutVar.writeMutVar pv $! p
+                        { tLeft   = if xrv == xv then pv else xrv
+                        , tParent = xv
+                        , tAgg    = xra <> tValue p <> pra
+                        }
+
+                    MutVar.writeMutVar xv $! x
+                        { tAgg    = tAgg p
+                        , tRight  = pv
+                        , tParent = xv
+                        }
+
+                    return pv
+
+                | gv == pv -> do
+                    -- ZIG (Left)
+                    --
+                    --  p    =>    x
+                    --   \        /
+                    --    x      p
+                    --   /        \
+                    --  xl         xl
+                    --
+                    when (xlv /= xv) $ MutVar.modifyMutVar' xlv $ \xl ->
+                        xl {tParent = pv}
+
+                    pla <- if plv == pv then return mempty else tAgg <$> MutVar.readMutVar plv
+
+                    MutVar.writeMutVar pv $! p
+                        { tRight  = if xlv == xv then pv else xlv
+                        , tParent = xv
+                        , tAgg    = pla <> tValue p <> xla
+                        }
+
+                    MutVar.writeMutVar xv $! x
+                        { tAgg    = tAgg p
+                        , tLeft   = pv
+                        , tParent = xv
+                        }
+
+                    return pv
+
+                | otherwise -> do
+
+                    g <- MutVar.readMutVar gv
+                    let ggv = tParent g
+                    let glv = tLeft g
+                    let grv = tRight g
+                    when (ggv /= gv) $ MutVar.modifyMutVar' ggv $ \gg ->
+                        if tLeft gg == gv
+                            then gg {tLeft = xv}
+                            else gg {tRight = xv}
+
+                    if  | plv == xv && glv == pv -> do
+                            -- ZIGZIG (Right):
+                            --
+                            --       gg       gg
+                            --       |        |
+                            --       g        x
+                            --      / \      / \
+                            --     p     =>     p
+                            --    / \          / \
+                            --   x   pr       xr  g
+                            --  / \              /
+                            --     xr           pr
+                            --
+
+                            pra <- if prv == pv then return mempty else tAgg <$> MutVar.readMutVar prv
+                            gra <- if grv == gv then return mempty else tAgg <$> MutVar.readMutVar grv
+
+                            let !ga' = pra <> tValue g <> gra
+
+                            when (prv /= pv) $ MutVar.modifyMutVar' prv $ \pr ->
+                                pr {tParent = gv}
+
+                            MutVar.writeMutVar gv $! g
+                                { tParent = pv
+                                , tLeft   = if prv == pv then gv else prv
+                                , tAgg    = ga'
+                                }
+
+                            when (xrv /= xv) $ MutVar.modifyMutVar' xrv $ \xr ->
+                                xr {tParent = pv}
+
+                            let !pa' = xra <> tValue p <> ga'
+
+                            MutVar.writeMutVar pv $! p
+                                { tParent = xv
+                                , tLeft    = if xrv == xv then pv else xrv
+                                , tRight   = gv
+                                , tAgg     = pa'
+                                }
+
+                            go gv xla pa' $! x
+                                { tRight  = pv
+                                , tAgg    = tAgg g
+                                , tParent = if ggv == gv then xv else ggv
+                                }
+
+                        | plv /= xv && glv /= pv -> do
+                            -- ZIGZIG (Left):
+                            --
+                            --   gg               gg
+                            --   |                |
+                            --   g                x
+                            --  / \              / \
+                            --     p     =>     p
+                            --    / \          / \
+                            --   pl  x        g   xl
+                            --      / \      / \
+                            --     xl           pl
+                            --
+
+                            pla <- if plv == pv then return mempty else tAgg <$> MutVar.readMutVar plv
+                            gla <- if glv == gv then return mempty else tAgg <$> MutVar.readMutVar glv
+
+                            let !ga' = gla <> tValue g <> pla
+
+                            when (plv /= pv) $ MutVar.modifyMutVar' plv $ \pl ->
+                                pl {tParent = gv}
+
+                            MutVar.writeMutVar gv $! g
+                                { tParent = pv
+                                , tRight  = if plv == pv then gv else plv
+                                , tAgg    = ga'
+                                }
+
+                            when (xlv /= xv) $ MutVar.modifyMutVar' xlv $ \xl ->
+                                xl {tParent = pv}
+
+                            let !pa' = ga' <> tValue p <> xla
+
+                            MutVar.writeMutVar pv $! p
+                                { tParent = xv
+                                , tLeft   = gv
+                                , tRight  = if xlv == xv then pv else xlv
+                                , tAgg    = pa'
+                                }
+
+                            go gv pa' xra $! x
+                                { tLeft   = pv
+                                , tAgg    = tAgg g
+                                , tParent = if ggv == gv then xv else ggv
+                                }
+
+                        | plv == xv -> do
+                            -- ZIGZIG (Left):
+                            --
+                            --    gg            gg
+                            --    |             |
+                            --    g             x
+                            --     \          /   \
+                            --      p   =>  g       p
+                            --     /         \     /
+                            --    x           xl  xr
+                            --   / \
+                            --  xl  xr
+
+
+                            gla <- if glv == gv then return mempty else tAgg <$> MutVar.readMutVar glv
+
+                            when (xlv /= xv) $ MutVar.modifyMutVar' xlv $ \xl ->
+                                xl {tParent = gv}
+
+                            let !ga' = gla <> tValue g <> xla
+                            MutVar.writeMutVar gv $! g
+                                { tParent = xv
+                                , tRight  = if xlv == xv then gv else xlv
+                                , tAgg    = ga'
+                                }
+
+                            pra <- if prv == pv then return mempty else tAgg <$> MutVar.readMutVar grv
+
+                            when (xrv /= xv) $ MutVar.modifyMutVar' xrv $ \xr ->
+                                xr {tParent = pv}
+
+                            let pa' = xra <> tValue p <> pra
+                            MutVar.writeMutVar pv $! p
+                                { tParent = xv
+                                , tLeft   = if xrv == xv then pv else xrv
+                                , tAgg    = pa'
+                                }
+
+                            go gv ga' pa' $! x
+                                { tParent = if ggv == gv then xv else ggv
+                                , tLeft   = gv
+                                , tRight  = pv
+                                , tAgg    = tAgg g
+                                }
+
+                        | otherwise -> do
+                            -- ZIGZIG (Right):
+                            --
+                            --    gg            gg
+                            --    |             |
+                            --    g             x
+                            --   /            /   \
+                            --  p       =>  p       g
+                            --   \           \     /
+                            --    x           xl  xr
+                            --   / \
+                            --  xl  xr
+                            gra <- if grv == gv then return mempty else tAgg <$> MutVar.readMutVar grv
+
+                            when (xrv /= xv) $ MutVar.modifyMutVar' xrv $ \xr ->
+                                xr {tParent = gv}
+
+                            let !ga' = xra <> tValue g <> gra
+                            MutVar.writeMutVar gv $! g
+                                { tParent = xv
+                                , tLeft   = if xrv == xv then gv else xrv
+                                , tAgg    = ga'
+                                }
+
+                            pla <- if plv == pv then return mempty else tAgg <$> MutVar.readMutVar glv
+
+                            when (xlv /= xv) $ MutVar.modifyMutVar' xlv $ \xl ->
+                                xl {tParent = pv}
+
+                            let !pa' = pla <> tValue p <> xla
+                            MutVar.writeMutVar pv $! p
+                                { tParent = xv
+                                , tRight  = if xlv == xv then pv else xlv
+                                , tAgg    = pa'
+                                }
+
+                            go gv pa' ga' $! x
+                                { tParent = if ggv == gv then xv else ggv
+                                , tLeft   = pv
+                                , tRight  = gv
+                                , tAgg    = tAgg g
+                                }
 
 getRightMost
     :: PrimMonad m
@@ -174,65 +411,6 @@ getRightMost
 getRightMost t = do
     tr <- tRight <$> MutVar.readMutVar t
     if t == tr then return t else getRightMost tr
-
-rotateLeft, rotateRight
-    :: (PrimMonad m, Monoid v)
-    => Tree (PrimState m) a v  -- X's parent
-    -> Tree (PrimState m) a v  -- X
-    -> m ()
-rotateLeft pv xv = do
-    p0 <- MutVar.readMutVar pv
-    x0 <- MutVar.readMutVar xv
-    let gpv = tParent p0
-
-    when (gpv /= pv) $ MutVar.modifyMutVar' gpv $ \gp ->
-        if tLeft gp == pv then gp {tLeft = xv} else gp {tRight = xv}
-
-    when (tLeft x0 /= xv) $ MutVar.modifyMutVar' (tLeft x0) $ \l ->
-        l {tParent = pv}
-
-    MutVar.writeMutVar xv $! x0
-        { tAgg    = tAgg p0
-        , tLeft   = pv
-        , tParent = if gpv == pv then xv else gpv
-        }
-
-    let plv = tLeft p0
-    pla <- if plv == pv then return mempty else tAgg <$> MutVar.readMutVar plv
-    pra <- if tLeft x0 == xv then return mempty else tAgg <$> MutVar.readMutVar (tLeft x0)
-
-    MutVar.writeMutVar pv $! p0
-        { tRight  = if tLeft x0 == xv then pv else tLeft x0
-        , tParent = xv
-        , tAgg    = pla <> tValue p0 <> pra
-        }
-
-rotateRight pv xv = do
-    p0 <- MutVar.readMutVar pv
-    x0 <- MutVar.readMutVar xv
-    let gpv = tParent p0
-
-    when (gpv /= pv) $ MutVar.modifyMutVar' gpv $ \gp ->
-        if tLeft gp == pv then gp {tLeft = xv} else gp {tRight = xv}
-
-    when (tRight x0 /= xv) $ MutVar.modifyMutVar' (tRight x0) $ \l ->
-        l {tParent = pv}
-
-    MutVar.writeMutVar xv $! x0
-        { tAgg    = tAgg p0
-        , tRight  = pv
-        , tParent = if gpv == pv then xv else gpv
-        }
-
-    let prv = tRight p0
-    pla <- if tRight x0 == xv then return mempty else tAgg <$> MutVar.readMutVar (tRight x0)
-    pra <- if prv == pv then return mempty else tAgg <$> MutVar.readMutVar prv
-
-    MutVar.writeMutVar pv $! p0
-        { tLeft   = if tRight x0 == xv then pv else tRight x0
-        , tParent = xv
-        , tAgg    = pla <> tValue p0 <> pra
-        }
 
 setLeft, setRight
     :: PrimMonad m
