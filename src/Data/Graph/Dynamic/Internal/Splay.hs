@@ -29,7 +29,8 @@ import           Data.Primitive.MutVar   (MutVar)
 import qualified Data.Primitive.MutVar   as MutVar
 import qualified Data.Tree               as Tree
 import           Prelude                 hiding (concat, print)
-
+import           System.IO.Unsafe        (unsafePerformIO)
+import           Unsafe.Coerce           (unsafeCoerce)
 
 data Tree' s a v = Tree
     { tParent :: {-# UNPACK #-} !(Tree s a v)
@@ -40,22 +41,34 @@ data Tree' s a v = Tree
     , tAgg    :: !v
     }
 
--- instance Eq (Tree s a v) where
---     -- Reference equality through a MutVar.
---     t1 == t2 = tParent t1 == tParent t2
+-- | NOTE (jaspervdj): There are two ways of indicating the parent / left /
+-- right is not set (we want to avoid Maybe's since they cause a lot of
+-- indirections).
+--
+-- Imagine that we are considering tLeft.
+--
+-- 1.  We can set tLeft of x to the MutVar that holds the tree itself (i.e. a
+--     self-loop).
+-- 2.  We can set tLeft to some nil value.
+--
+-- They seem to offer similar performance.  We choose to use the latter since it
+-- is less likely to end up in infinite loops that way, and additionally, we can
+-- move easily move e.g. x's left child to y's right child, even it is an empty
+-- child.
+nil :: Tree s a v
+nil = unsafeCoerce $ unsafePerformIO $ MutVar.newMutVar undefined
+{-# NOINLINE nil #-}
 
 type Tree s a v = MutVar s (Tree' s a v)
 
 singleton :: PrimMonad m => a -> v -> m (Tree (PrimState m) a v)
-singleton tLabel tValue = do
-    tree <- MutVar.newMutVar undefined
-    MutVar.writeMutVar tree $! Tree tree tree tree tLabel tValue tValue
-    return tree
+singleton tLabel tValue =
+    MutVar.newMutVar $! Tree nil nil nil tLabel tValue tValue
 
 getRoot :: PrimMonad m => Tree (PrimState m) a v -> m (Tree (PrimState m) a v)
 getRoot tree = do
     Tree{..} <- MutVar.readMutVar tree
-    if tParent == tree then return tree else getRoot tParent
+    if tParent == nil then return tree else getRoot tParent
 
 -- | Appends two trees.  Returns the root of the tree.
 append
@@ -84,14 +97,14 @@ split
     -> m (Maybe (Tree (PrimState m) a v), Maybe (Tree (PrimState m) a v))
 split x = do
     _ <- splay x
-    Tree{..} <- MutVar.readMutVar x
-    removeParent tLeft  -- Works even if l is x
-    removeParent tRight
+    Tree {..} <- MutVar.readMutVar x
+    when (tLeft /= nil) (removeParent tLeft)  -- Works even if l is x
+    when (tRight /= nil) (removeParent tRight)
     removeLeft  x
     removeRight x
     return
-        ( if tLeft == x then Nothing else Just tLeft
-        , if tRight == x then Nothing else Just tRight
+        ( if tLeft == nil then Nothing else Just tLeft
+        , if tRight == nil then Nothing else Just tRight
         )
 
 connected
@@ -125,9 +138,9 @@ toList = go []
   where
     go acc0 tree = do
         Tree{..} <- MutVar.readMutVar tree
-        acc1   <- if tRight == tree then return acc0 else go acc0 tRight
+        acc1 <- if tRight == nil then return acc0 else go acc0 tRight
         let acc2 = tLabel : acc1
-        if tLeft  == tree then return acc2 else go acc2 tLeft
+        if tLeft == nil then return acc2 else go acc2 tLeft
 
 splay
     :: (PrimMonad m, Monoid v)
@@ -141,13 +154,13 @@ splay xv = do
     -- The same is true for the left and right aggregates of x: they can be
     -- passed upwards rather than recomputed.
     x0 <- MutVar.readMutVar xv
-    xla <- if tLeft x0 == xv then return mempty else tAgg <$> MutVar.readMutVar (tLeft x0)
-    xra <- if tRight x0 == xv then return mempty else tAgg <$> MutVar.readMutVar (tRight x0)
+    xla <- if tLeft x0 == nil then return mempty else tAgg <$> MutVar.readMutVar (tLeft x0)
+    xra <- if tRight x0 == nil then return mempty else tAgg <$> MutVar.readMutVar (tRight x0)
     go xv xla xra x0
   where
     go closestToRootFound xla xra !x = do
         let !pv = tParent x
-        if pv == xv then do
+        if pv == nil then do
             MutVar.writeMutVar xv x
             return closestToRootFound
         else do
@@ -157,7 +170,7 @@ splay xv = do
             let prv = tRight p
             let xlv = tLeft x
             let xrv = tRight x
-            if  | gv == pv, plv == xv -> do
+            if  | gv == nil, plv == xv -> do
                     -- ZIG (Right)
                     --
                     --    p  =>  x
@@ -166,13 +179,12 @@ splay xv = do
                     --   \        /
                     --    xr     xr
                     --
-                    when (xrv /= xv) $ MutVar.modifyMutVar' xrv $ \xr ->
+                    when (xrv /= nil) $ MutVar.modifyMutVar' xrv $ \xr ->
                         xr {tParent = pv}
 
-                    pra <- if prv == pv then return mempty else tAgg <$> MutVar.readMutVar prv
-
+                    pra <- if prv == nil then return mempty else tAgg <$> MutVar.readMutVar prv
                     MutVar.writeMutVar pv $! p
-                        { tLeft   = if xrv == xv then pv else xrv
+                        { tLeft   = xrv
                         , tParent = xv
                         , tAgg    = xra <> tValue p <> pra
                         }
@@ -180,12 +192,12 @@ splay xv = do
                     MutVar.writeMutVar xv $! x
                         { tAgg    = tAgg p
                         , tRight  = pv
-                        , tParent = xv
+                        , tParent = nil
                         }
 
                     return pv
 
-                | gv == pv -> do
+                | gv == nil -> do
                     -- ZIG (Left)
                     --
                     --  p    =>    x
@@ -194,13 +206,12 @@ splay xv = do
                     --   /        \
                     --  xl         xl
                     --
-                    when (xlv /= xv) $ MutVar.modifyMutVar' xlv $ \xl ->
+                    when (xlv /= nil) $ MutVar.modifyMutVar' xlv $ \xl ->
                         xl {tParent = pv}
 
-                    pla <- if plv == pv then return mempty else tAgg <$> MutVar.readMutVar plv
-
+                    pla <- if plv == nil then return mempty else tAgg <$> MutVar.readMutVar plv
                     MutVar.writeMutVar pv $! p
-                        { tRight  = if xlv == xv then pv else xlv
+                        { tRight  = xlv
                         , tParent = xv
                         , tAgg    = pla <> tValue p <> xla
                         }
@@ -208,7 +219,7 @@ splay xv = do
                     MutVar.writeMutVar xv $! x
                         { tAgg    = tAgg p
                         , tLeft   = pv
-                        , tParent = xv
+                        , tParent = nil
                         }
 
                     return pv
@@ -219,7 +230,7 @@ splay xv = do
                     let ggv = tParent g
                     let glv = tLeft g
                     let grv = tRight g
-                    when (ggv /= gv) $ MutVar.modifyMutVar' ggv $ \gg ->
+                    when (ggv /= nil) $ MutVar.modifyMutVar' ggv $ \gg ->
                         if tLeft gg == gv
                             then gg {tLeft = xv}
                             else gg {tRight = xv}
@@ -238,28 +249,25 @@ splay xv = do
                             --     xr           pr
                             --
 
-                            pra <- if prv == pv then return mempty else tAgg <$> MutVar.readMutVar prv
-                            gra <- if grv == gv then return mempty else tAgg <$> MutVar.readMutVar grv
-
+                            pra <- if prv == nil then return mempty else tAgg <$> MutVar.readMutVar prv
+                            gra <- if grv == nil then return mempty else tAgg <$> MutVar.readMutVar grv
                             let !ga' = pra <> tValue g <> gra
-
-                            when (prv /= pv) $ MutVar.modifyMutVar' prv $ \pr ->
+                            when (prv /= nil) $ MutVar.modifyMutVar' prv $ \pr ->
                                 pr {tParent = gv}
 
                             MutVar.writeMutVar gv $! g
                                 { tParent = pv
-                                , tLeft   = if prv == pv then gv else prv
+                                , tLeft   = prv
                                 , tAgg    = ga'
                                 }
 
-                            when (xrv /= xv) $ MutVar.modifyMutVar' xrv $ \xr ->
+                            when (xrv /= nil) $ MutVar.modifyMutVar' xrv $ \xr ->
                                 xr {tParent = pv}
 
                             let !pa' = xra <> tValue p <> ga'
-
                             MutVar.writeMutVar pv $! p
                                 { tParent = xv
-                                , tLeft    = if xrv == xv then pv else xrv
+                                , tLeft    = xrv
                                 , tRight   = gv
                                 , tAgg     = pa'
                                 }
@@ -267,7 +275,7 @@ splay xv = do
                             go gv xla pa' $! x
                                 { tRight  = pv
                                 , tAgg    = tAgg g
-                                , tParent = if ggv == gv then xv else ggv
+                                , tParent = ggv
                                 }
 
                         | plv /= xv && glv /= pv -> do
@@ -283,37 +291,33 @@ splay xv = do
                             --      / \      / \
                             --     xl           pl
                             --
-
-                            pla <- if plv == pv then return mempty else tAgg <$> MutVar.readMutVar plv
-                            gla <- if glv == gv then return mempty else tAgg <$> MutVar.readMutVar glv
-
+                            pla <- if plv == nil then return mempty else tAgg <$> MutVar.readMutVar plv
+                            gla <- if glv == nil then return mempty else tAgg <$> MutVar.readMutVar glv
                             let !ga' = gla <> tValue g <> pla
-
-                            when (plv /= pv) $ MutVar.modifyMutVar' plv $ \pl ->
+                            when (plv /= nil) $ MutVar.modifyMutVar' plv $ \pl ->
                                 pl {tParent = gv}
 
                             MutVar.writeMutVar gv $! g
                                 { tParent = pv
-                                , tRight  = if plv == pv then gv else plv
+                                , tRight  = plv
                                 , tAgg    = ga'
                                 }
 
-                            when (xlv /= xv) $ MutVar.modifyMutVar' xlv $ \xl ->
+                            when (xlv /= nil) $ MutVar.modifyMutVar' xlv $ \xl ->
                                 xl {tParent = pv}
 
                             let !pa' = ga' <> tValue p <> xla
-
                             MutVar.writeMutVar pv $! p
                                 { tParent = xv
                                 , tLeft   = gv
-                                , tRight  = if xlv == xv then pv else xlv
+                                , tRight  = xlv
                                 , tAgg    = pa'
                                 }
 
                             go gv pa' xra $! x
                                 { tLeft   = pv
                                 , tAgg    = tAgg g
-                                , tParent = if ggv == gv then xv else ggv
+                                , tParent = ggv
                                 }
 
                         | plv == xv -> do
@@ -328,34 +332,31 @@ splay xv = do
                             --    x           xl  xr
                             --   / \
                             --  xl  xr
-
-
-                            gla <- if glv == gv then return mempty else tAgg <$> MutVar.readMutVar glv
-
-                            when (xlv /= xv) $ MutVar.modifyMutVar' xlv $ \xl ->
+                            --
+                            when (xlv /= nil) $ MutVar.modifyMutVar' xlv $ \xl ->
                                 xl {tParent = gv}
 
+                            gla <- if glv == nil then return mempty else tAgg <$> MutVar.readMutVar glv
                             let !ga' = gla <> tValue g <> xla
                             MutVar.writeMutVar gv $! g
                                 { tParent = xv
-                                , tRight  = if xlv == xv then gv else xlv
+                                , tRight  = xlv
                                 , tAgg    = ga'
                                 }
 
-                            pra <- if prv == pv then return mempty else tAgg <$> MutVar.readMutVar grv
-
-                            when (xrv /= xv) $ MutVar.modifyMutVar' xrv $ \xr ->
+                            when (xrv /= nil) $ MutVar.modifyMutVar' xrv $ \xr ->
                                 xr {tParent = pv}
 
+                            pra <- if prv == nil then return mempty else tAgg <$> MutVar.readMutVar grv
                             let pa' = xra <> tValue p <> pra
                             MutVar.writeMutVar pv $! p
                                 { tParent = xv
-                                , tLeft   = if xrv == xv then pv else xrv
+                                , tLeft   = xrv
                                 , tAgg    = pa'
                                 }
 
                             go gv ga' pa' $! x
-                                { tParent = if ggv == gv then xv else ggv
+                                { tParent = ggv
                                 , tLeft   = gv
                                 , tRight  = pv
                                 , tAgg    = tAgg g
@@ -373,32 +374,31 @@ splay xv = do
                             --    x           xl  xr
                             --   / \
                             --  xl  xr
-                            gra <- if grv == gv then return mempty else tAgg <$> MutVar.readMutVar grv
-
-                            when (xrv /= xv) $ MutVar.modifyMutVar' xrv $ \xr ->
+                            --
+                            when (xrv /= nil) $ MutVar.modifyMutVar' xrv $ \xr ->
                                 xr {tParent = gv}
 
+                            gra <- if grv == nil then return mempty else tAgg <$> MutVar.readMutVar grv
                             let !ga' = xra <> tValue g <> gra
                             MutVar.writeMutVar gv $! g
                                 { tParent = xv
-                                , tLeft   = if xrv == xv then gv else xrv
+                                , tLeft   = xrv
                                 , tAgg    = ga'
                                 }
 
-                            pla <- if plv == pv then return mempty else tAgg <$> MutVar.readMutVar glv
-
-                            when (xlv /= xv) $ MutVar.modifyMutVar' xlv $ \xl ->
+                            when (xlv /= nil) $ MutVar.modifyMutVar' xlv $ \xl ->
                                 xl {tParent = pv}
 
+                            pla <- if plv == nil then return mempty else tAgg <$> MutVar.readMutVar glv
                             let !pa' = pla <> tValue p <> xla
                             MutVar.writeMutVar pv $! p
                                 { tParent = xv
-                                , tRight  = if xlv == xv then pv else xlv
+                                , tRight  = xlv
                                 , tAgg    = pa'
                                 }
 
                             go gv pa' ga' $! x
-                                { tParent = if ggv == gv then xv else ggv
+                                { tParent = ggv
                                 , tLeft   = pv
                                 , tRight  = gv
                                 , tAgg    = tAgg g
@@ -410,7 +410,7 @@ getRightMost
     -> m (Tree (PrimState m) a v)
 getRightMost t = do
     tr <- tRight <$> MutVar.readMutVar t
-    if t == tr then return t else getRightMost tr
+    if tr == nil then return t else getRightMost tr
 
 setLeft, setRight
     :: PrimMonad m
@@ -428,9 +428,9 @@ removeParent, removeLeft, removeRight
     :: PrimMonad m
     => Tree (PrimState m) a v -- Parent
     -> m ()
-removeParent x = MutVar.modifyMutVar' x $ \x' -> x' {tParent = x}
-removeLeft   x = MutVar.modifyMutVar' x $ \x' -> x' {tLeft = x}
-removeRight  x = MutVar.modifyMutVar' x $ \x' -> x' {tRight = x}
+removeParent x = MutVar.modifyMutVar' x $ \x' -> x' {tParent = nil}
+removeLeft   x = MutVar.modifyMutVar' x $ \x' -> x' {tLeft = nil}
+removeRight  x = MutVar.modifyMutVar' x $ \x' -> x' {tRight = nil}
 
 -- | Recompute the aggregate of a node.
 updateAggregate
@@ -440,9 +440,9 @@ updateAggregate
 updateAggregate t = do
     t' <- MutVar.readMutVar t
     let l = tLeft t'
-    la <- if l == t then return mempty else tAgg <$> MutVar.readMutVar l
+    la <- if l == nil then return mempty else tAgg <$> MutVar.readMutVar l
     let r = tRight t'
-    ra <- if r == t then return mempty else tAgg <$> MutVar.readMutVar r
+    ra <- if r == nil then return mempty else tAgg <$> MutVar.readMutVar r
     let !agg = la <> tValue t' <> ra
     MutVar.writeMutVar t $! t' {tAgg = agg}
 
@@ -451,8 +451,8 @@ freeze :: PrimMonad m => Tree (PrimState m) a v -> m (Tree.Tree a)
 freeze tree = do
     Tree {..} <- MutVar.readMutVar tree
     children  <- sequence $
-        [freeze tLeft | tLeft /= tree] ++
-        [freeze tRight | tRight /= tree]
+        [freeze tLeft | tLeft /= nil] ++
+        [freeze tRight | tRight /= nil]
     return $ Tree.Node tLabel children
 
 print :: Show a => Tree (PrimState IO) a v -> IO ()
@@ -460,16 +460,16 @@ print = go 0
   where
     go d t = do
         Tree{..} <- MutVar.readMutVar t
-        when (tLeft /= t) $ go (d + 1) tLeft
+        when (tLeft /= nil) $ go (d + 1) tLeft
 
         putStrLn $ replicate d ' ' ++ show tLabel
 
-        when (tRight /= t) $ go (d + 1) tRight
+        when (tRight /= nil) $ go (d + 1) tRight
 
 assertInvariants
     :: (PrimMonad m, Monoid v, Eq v, Show v) => Tree (PrimState m) a v -> m ()
 assertInvariants t = do
-    _ <- computeAgg t t
+    _ <- computeAgg nil t
     return ()
   where
     -- TODO: Check average
@@ -480,8 +480,8 @@ assertInvariants t = do
 
         let l = tLeft x'
         let r = tRight x'
-        la <- if l == x then return mempty else computeAgg x l
-        ra <- if r == x then return mempty else computeAgg x r
+        la <- if l == nil then return mempty else computeAgg x l
+        ra <- if r == nil then return mempty else computeAgg x r
 
         let actualAgg = la <> (tValue x') <> ra
         let storedAgg = tAgg x'
