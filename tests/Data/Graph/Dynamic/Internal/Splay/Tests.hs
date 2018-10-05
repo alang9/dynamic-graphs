@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 module Data.Graph.Dynamic.Internal.Splay.Tests
     ( tests
     ) where
@@ -14,6 +15,10 @@ import           Test.Framework                       (Test)
 import           Test.Framework.Providers.QuickCheck2 (testProperty)
 import           Test.Framework.TH                    (testGroupGenerator)
 import qualified Test.QuickCheck                      as QC
+
+instance QC.Arbitrary a => QC.Arbitrary (NonEmpty a) where
+    arbitrary = (NonEmpty.:|) <$> QC.arbitrary <*> QC.arbitrary
+    shrink (x NonEmpty.:| xs) = map (x NonEmpty.:|) (QC.shrink xs)
 
 data Appends a v
     = Singleton a v
@@ -65,6 +70,15 @@ prop_append appends = runST $ do
 
     l <- Splay.toList t
     return $ l QC.=== appendsToList appends
+
+prop_concat :: NonEmpty (Appends Int (Sum Int)) -> QC.Property
+prop_concat appends = runST $ do
+    ts <- NonEmpty.map fst <$> mapM appendsToTree appends
+    t  <- Splay.concat ts
+    Splay.assertInvariants t
+
+    l <- Splay.toList t
+    return $ l QC.=== concatMap appendsToList (NonEmpty.toList appends)
 
 tests :: Test
 tests = $(testGroupGenerator)

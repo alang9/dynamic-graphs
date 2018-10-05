@@ -164,7 +164,8 @@ reroot
     => Splay.Tree s a v -> m (Splay.Tree s a v)
 reroot t = do
     (mbPre, mbPost) <- Splay.split t
-    Splay.concat $ t NonEmpty.:| catMaybes [mbPost, mbPre]
+    t1 <- maybe (return t) (t `Splay.cons`) mbPost
+    maybe (return t1) (t1 `Splay.append`) mbPre
 
 hasEdge
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
@@ -195,13 +196,13 @@ insertEdge etf a b = do
           bLoop1            <- reroot bLoop
           abNode            <- Splay.singleton (a, b) (Sum 0)
           baNode            <- Splay.singleton (b, a) (Sum 0)
+          bLoop2            <- abNode `Splay.cons` bLoop1
+          bLoop3            <- bLoop2 `Splay.snoc` baNode
           (mbPreA, mbPostA) <- Splay.split aLoop
 
           _ <- Splay.concat $
             aLoop NonEmpty.:| catMaybes
-            [ Just abNode
-            , Just bLoop1
-            , Just baNode
+            [ Just bLoop3
             , mbPostA
             , mbPreA
             ]

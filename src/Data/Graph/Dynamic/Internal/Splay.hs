@@ -1,10 +1,13 @@
 {-# LANGUAGE BangPatterns    #-}
 {-# LANGUAGE MultiWayIf      #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Data.Graph.Dynamic.Internal.Splay
     ( Tree
 
     , singleton
+    , cons
+    , snoc
     , append
     , concat
     , split
@@ -70,26 +73,52 @@ getRoot tree = do
     Tree{..} <- MutVar.readMutVar tree
     if tParent == nil then return tree else getRoot tParent
 
+-- | `lv` must be a singleton tree
+cons
+    :: (PrimMonad m, Monoid v)
+    => Tree (PrimState m) a v -> Tree (PrimState m) a v
+    -> m (Tree (PrimState m) a v)
+cons lv rv = do
+    r <- MutVar.readMutVar rv
+    MutVar.modifyMutVar' lv $ \l -> l {tRight = rv, tAgg = tAgg l <> tAgg r}
+    MutVar.writeMutVar rv $! r {tParent = lv}
+    return lv
+
+-- | `rv` must be a singleton tree
+snoc
+    :: (PrimMonad m, Monoid v)
+    => Tree (PrimState m) a v -> Tree (PrimState m) a v
+    -> m (Tree (PrimState m) a v)
+snoc lv rv = do
+    l <- MutVar.readMutVar lv
+    MutVar.modifyMutVar' rv $ \r -> r {tLeft = lv, tAgg = tAgg l <> tAgg r}
+    MutVar.writeMutVar lv $! l {tParent = rv}
+    return rv
+
 -- | Appends two trees.  Returns the root of the tree.
 append
     :: (PrimMonad m, Monoid v)
     => Tree (PrimState m) a v
     -> Tree (PrimState m) a v
     -> m (Tree (PrimState m) a v)
-append x y = do
-    rm <- getRightMost x
+append xv yv = do
+    rm <- getRightMost xv
     _  <- splay rm
-    -- _  <- splay y
-    setRight rm y
-    updateAggregate rm
+    y  <- MutVar.readMutVar yv
+    MutVar.modifyMutVar rm $ \r -> r {tRight = yv, tAgg = tAgg r <> tAgg y}
+    MutVar.writeMutVar yv $! y {tParent = rm}
     return rm
+  where
+    getRightMost tv = do
+        t <- MutVar.readMutVar tv
+        if tRight t == nil then return tv else getRightMost (tRight t)
 
 concat
-    :: (PrimMonad m, Monoid v)
+    :: forall m a v. (PrimMonad m, Monoid v)
     => NonEmpty (Tree (PrimState m) a v)
     -> m (Tree (PrimState m) a v)
-concat (x0 NonEmpty.:| xs0) =
-    foldM append x0 xs0
+concat trees0 =
+    case trees0 of x NonEmpty.:| xs -> foldM append x xs
 
 split
     :: (PrimMonad m, Monoid v)
@@ -347,7 +376,7 @@ splay xv = do
                             when (xrv /= nil) $ MutVar.modifyMutVar' xrv $ \xr ->
                                 xr {tParent = pv}
 
-                            pra <- if prv == nil then return mempty else tAgg <$> MutVar.readMutVar grv
+                            pra <- if prv == nil then return mempty else tAgg <$> MutVar.readMutVar prv
                             let pa' = xra <> tValue p <> pra
                             MutVar.writeMutVar pv $! p
                                 { tParent = xv
@@ -389,7 +418,7 @@ splay xv = do
                             when (xlv /= nil) $ MutVar.modifyMutVar' xlv $ \xl ->
                                 xl {tParent = pv}
 
-                            pla <- if plv == nil then return mempty else tAgg <$> MutVar.readMutVar glv
+                            pla <- if plv == nil then return mempty else tAgg <$> MutVar.readMutVar plv
                             let !pa' = pla <> tValue p <> xla
                             MutVar.writeMutVar pv $! p
                                 { tParent = xv
@@ -412,18 +441,6 @@ getRightMost t = do
     tr <- tRight <$> MutVar.readMutVar t
     if tr == nil then return t else getRightMost tr
 
-setLeft, setRight
-    :: PrimMonad m
-    => Tree (PrimState m) a v  -- Parent
-    -> Tree (PrimState m) a v  -- New child
-    -> m ()
-setLeft p x = do
-    MutVar.modifyMutVar' x $ \x' -> x' {tParent = p}
-    MutVar.modifyMutVar' p $ \p' -> p' {tLeft = x}
-setRight p x = do
-    MutVar.modifyMutVar' x $ \x' -> x' {tParent = p}
-    MutVar.modifyMutVar' p $ \p' -> p' {tRight = x}
-
 removeParent, removeLeft, removeRight
     :: PrimMonad m
     => Tree (PrimState m) a v -- Parent
@@ -431,20 +448,6 @@ removeParent, removeLeft, removeRight
 removeParent x = MutVar.modifyMutVar' x $ \x' -> x' {tParent = nil}
 removeLeft   x = MutVar.modifyMutVar' x $ \x' -> x' {tLeft = nil}
 removeRight  x = MutVar.modifyMutVar' x $ \x' -> x' {tRight = nil}
-
--- | Recompute the aggregate of a node.
-updateAggregate
-    :: (Monoid v, PrimMonad m)
-    => Tree (PrimState m) a v
-    -> m ()
-updateAggregate t = do
-    t' <- MutVar.readMutVar t
-    let l = tLeft t'
-    la <- if l == nil then return mempty else tAgg <$> MutVar.readMutVar l
-    let r = tRight t'
-    ra <- if r == nil then return mempty else tAgg <$> MutVar.readMutVar r
-    let !agg = la <> tValue t' <> ra
-    MutVar.writeMutVar t $! t' {tAgg = agg}
 
 -- | For debugging/testing.
 freeze :: PrimMonad m => Tree (PrimState m) a v -> m (Tree.Tree a)
