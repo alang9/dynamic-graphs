@@ -121,7 +121,7 @@ int main(int argc, char **argv) {
     run(instructions);
 
     double secs_total = 0;
-    int samples = 10;
+    int samples = 5;
     for (int i = 0; i < samples; i++) {
         timestamp_t t0 = get_timestamp();
         run(instructions);

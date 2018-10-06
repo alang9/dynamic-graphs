@@ -433,14 +433,6 @@ splay xv = do
                                 , tAgg    = tAgg g
                                 }
 
-getRightMost
-    :: PrimMonad m
-    => Tree (PrimState m) a v
-    -> m (Tree (PrimState m) a v)
-getRightMost t = do
-    tr <- tRight <$> MutVar.readMutVar t
-    if tr == nil then return t else getRightMost tr
-
 removeParent, removeLeft, removeRight
     :: PrimMonad m
     => Tree (PrimState m) a v -- Parent
