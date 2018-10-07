@@ -63,6 +63,7 @@ test-suite dynamic-connectivity-tests
     hashable,
     unordered-containers,
     primitive,
+    text,
     QuickCheck                 >= 2.4,
     test-framework             >= 0.6,
     test-framework-quickcheck2 >= 0.2,
@@ -96,14 +97,13 @@ executable bench-program
   ghc-options: -Wall -O2 -threaded -rtsopts
 
   build-depends:
-    aeson,
     base,
-    bytestring,
     criterion,
     dynamic-connectivity,
     hashable,
     primitive,
     QuickCheck,
+    text,
     unordered-containers
 
   other-modules:
@@ -117,13 +117,12 @@ executable gen-program
   ghc-options: -Wall -O2 -threaded -rtsopts
 
   build-depends:
-    aeson,
     base,
-    bytestring,
     dynamic-connectivity,
     hashable,
     primitive,
     QuickCheck,
+    text,
     unordered-containers
 
   other-modules:

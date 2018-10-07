@@ -11,19 +11,28 @@ module Data.Graph.Dynamic.Program
 
     , IntTreeProgram (..)
     , IntGraphProgram (..)
+
+    , encodeProgram
+    , decodeProgram
+    , encodeInt
+    , decodeInt
     ) where
 
 import           Control.Monad                (void, when)
 import           Control.Monad.Primitive      (PrimMonad (..))
-import qualified Data.Aeson                   as A
 import qualified Data.Graph.Dynamic.EulerTour as ET
 import qualified Data.Graph.Dynamic.Levels    as Levels
 import qualified Data.Graph.Dynamic.Slow      as Slow
 import           Data.Hashable                (Hashable)
 import qualified Data.HashSet                 as HS
-import           Data.List                    ((\\))
+import           Data.List                    (intersperse, (\\))
 import           Data.Maybe                   (fromMaybe)
+import           Data.Monoid                  ((<>))
+import qualified Data.Text                    as T
+import qualified Data.Text.Lazy               as TL
+import qualified Data.Text.Lazy.Builder       as TLB
 import qualified Test.QuickCheck              as QC
+import           Text.Read                    (readMaybe)
 
 type Program v = [Instruction v]
 
@@ -172,35 +181,45 @@ instance QC.Arbitrary IntGraphProgram where
 
 --------------------------------------------------------------------------------
 
-instance A.ToJSON v => A.ToJSON (Instruction v) where
-    toJSON (InsertVertex x) = A.object
-        ["tag" A..= tagInsert, "x" A..= x]
+encodeProgram
+    :: (v -> T.Text) -> Program v -> TL.Text
+encodeProgram encodeVertex =
+    TLB.toLazyText . mconcat . intersperse "\n" . map encodeInstruction
+  where
+    x <+> y = x <> " " <> y
+    v       = TLB.fromText . encodeVertex
+    b False = "false"
+    b True  = "true"
 
-    toJSON (InsertEdge x y) = A.object
-        ["tag" A..= tagLink, "x" A..= x, "y" A..= y]
+    encodeInstruction (InsertVertex x)  = "insert" <+> v x
+    encodeInstruction (InsertEdge x y)  = "link" <+> v x <+> v y
+    encodeInstruction (DeleteVertex x)  = "delete" <+> v x
+    encodeInstruction (DeleteEdge x y)  = "cut" <+> v x <+> v y
+    encodeInstruction (Connected x y e) = "connected" <+> v x <+> v y <+> b e
 
-    toJSON (DeleteVertex x) = A.object
-        ["tag" A..= tagDelete, "x" A..= x]
+decodeProgram
+    :: (T.Text -> Either String v) -> TL.Text -> Either String (Program v)
+decodeProgram decodeVertex =
+    mapM decodeInstruction . TL.lines
+  where
+    v         = decodeVertex
+    b "false" = return False
+    b "true"  = return True
+    b x       = Left $ "Can't decode bool: " ++ T.unpack x
 
-    toJSON (DeleteEdge x y) = A.object
-        ["tag" A..= tagCut, "x" A..= x, "y" A..= y]
+    decodeInstruction line = case T.words (TL.toStrict line) of
+        ["insert", x]          -> InsertVertex <$> v x
+        ["link", x, y]         -> InsertEdge <$> v x <*> v y
+        ["delete", x]          -> DeleteVertex <$> v x
+        ["cut", x, y]          -> DeleteEdge <$> v x <*> v y
+        ["connected", x, y, e] -> Connected <$> v x <*> v y <*> b e
+        _                      -> Left $
+            "Can't decode instruction: " ++ TL.unpack line
 
-    toJSON (Connected x y expect) = A.object
-        ["tag" A..= tagConnected, "x" A..= x, "y" A..= y, "expect" A..= expect]
+encodeInt :: Int -> T.Text
+encodeInt = T.pack . show
 
-instance A.FromJSON v => A.FromJSON (Instruction v) where
-    parseJSON = A.withObject "FromJSON Instruction" $ \o -> do
-        tag <- o A..: "tag"
-        if  | tag == tagInsert    -> InsertVertex <$> o A..: "x"
-            | tag == tagLink      -> InsertEdge <$> o A..: "x" <*> o A..: "y"
-            | tag == tagDelete    -> DeleteVertex <$> o A..: "x"
-            | tag == tagCut       -> DeleteEdge <$> o A..: "x" <*> o A..: "y"
-            | tag == tagConnected -> Connected <$> o A..: "x" <*> o A..: "y" <*> o A..: "expect"
-            | otherwise           -> fail $ "Unknown tag: " ++ show tag
-
-tagInsert, tagLink, tagDelete, tagCut, tagConnected :: Int
-tagInsert    = 0
-tagLink      = 1
-tagDelete    = 2
-tagCut       = 3
-tagConnected = 4
+decodeInt :: T.Text -> Either String Int
+decodeInt t = case readMaybe (T.unpack t) of
+    Nothing -> Left $ "Can't decode int: " ++ T.unpack t
+    Just x  -> Right x

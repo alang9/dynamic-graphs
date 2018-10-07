@@ -6,7 +6,6 @@ OBJS = \
 	16lawrencel-dynamic-graphs/fullDynamic.o \
 	16lawrencel-dynamic-graphs/eulerTourTree.o \
 	16lawrencel-dynamic-graphs/splayTree.o \
-	dropbox-json11/json11.o \
 
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c -o $@ $<

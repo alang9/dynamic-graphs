@@ -1,4 +1,4 @@
 # C++ Benchmarks
 
     make
-    ./bench1 <program.json
+    ./bench-program <program.txt

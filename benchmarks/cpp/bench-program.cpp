@@ -1,14 +1,14 @@
 #include <iostream>
-#include <string>
+#include <map>
 #include <sstream>
 #include <stdexcept>
+#include <string>
+#include <vector>
 #include <sys/time.h>
 
-#include "dropbox-json11/json11.hpp"
 #include "16lawrencel-dynamic-graphs/fullDynamic.h"
 
 using namespace std;
-using namespace json11;
 
 enum InstructionTag {
     INSERT = 0,
@@ -25,36 +25,39 @@ typedef struct {
     bool expect;
 } Instruction;
 
-Json json_from_stream(istream &in) {
-    stringstream buffer;
-    string line;
+void parse_instructions(istream &in, vector<Instruction> &instructions) {
+    string word;
 
-    while (getline(in, line)) {
-        buffer << line << endl;
-    }
-
-    string input = buffer.str();
-
-    string err;
-    Json json = Json::parse(input, err);
-    return json;
-}
-
-vector<Instruction> instructions_from_json(Json json) {
-    vector<Instruction> instructions;
-
-    vector<Json> json_array = json.array_items();
-    for (size_t i = 0; i < json_array.size(); i++) {
-        map<string, Json> json_object = json_array[i].object_items();
+    while (in >> word) {
         Instruction instr;
-        instr.tag = static_cast<InstructionTag>(json_object["tag"].int_value());
-        instr.x = json_object["x"].int_value();
-        instr.y = json_object["y"].int_value();
-        instr.expect = json_object["expect"].bool_value();
+        if (word == "insert") {
+            instr.tag = INSERT;
+            in >> instr.x;
+        } else if (word == "link") {
+            instr.tag = LINK;
+            in >> instr.x;
+            in >> instr.y;
+        } else if (word == "delete") {
+            instr.tag = DELETE;
+            in >> instr.x;
+        } else if (word == "cut") {
+            instr.tag = CUT;
+            in >> instr.x;
+            in >> instr.y;
+        } else if (word == "connected") {
+            instr.tag = CONNECTED;
+            string b;
+            in >> instr.x;
+            in >> instr.y;
+            in >> b;
+            instr.expect = b == "true" ? true : false;
+        } else {
+            cerr << "Unknown instruction: " << word;
+            throw runtime_error("bail");
+        }
+
         instructions.push_back(instr);
     }
-
-    return instructions;
 }
 
 void run(const vector<Instruction> &instructions) {
@@ -114,8 +117,9 @@ static timestamp_t get_timestamp() {
 }
 
 int main(int argc, char **argv) {
-    Json json = json_from_stream(cin);
-    vector<Instruction> instructions = instructions_from_json(json);
+    vector<Instruction> instructions;
+    parse_instructions(cin, instructions);
+    cerr << "Running " << instructions.size() << " instructions..." << endl;
 
     /* Warmup */
     run(instructions);

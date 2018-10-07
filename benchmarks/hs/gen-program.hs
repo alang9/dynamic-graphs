@@ -1,6 +1,5 @@
-import qualified Data.Aeson                 as A
-import qualified Data.ByteString.Lazy.Char8 as BL8
 import qualified Data.Graph.Dynamic.Program as Program
+import qualified Data.Text.Lazy.IO          as TL
 import           System.Environment         (getArgs, getProgName)
 import           System.Exit                (exitFailure)
 import qualified System.IO                  as IO
@@ -15,7 +14,7 @@ main = do
         [sizeStr] | Just size <- readMaybe sizeStr -> do
             Program.IntGraphProgram sample <- head <$>
                 QC.sample' (QC.resize size QC.arbitrary)
-            BL8.putStrLn $ A.encode sample
+            TL.putStrLn $ Program.encodeProgram Program.encodeInt sample
         _ -> do
             IO.hPutStrLn IO.stderr $ "Usage: " ++ progName ++ " size"
             exitFailure
