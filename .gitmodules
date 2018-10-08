@@ -1,6 +1,6 @@
 [submodule "benchmarks/cpp/16lawrencel-dynamic-graphs"]
 	path = benchmarks/cpp/16lawrencel-dynamic-graphs
-	url = https://github.com/16lawrencel/dynamic-graphs
+	url = https://github.com/jaspervdj/dynamic-graphs
 [submodule "benchmarks/java/Undin-DynamicConnectivity"]
 	path = benchmarks/java/Undin-DynamicConnectivity
 	url = https://github.com/Undin/DynamicConnectivity.git
