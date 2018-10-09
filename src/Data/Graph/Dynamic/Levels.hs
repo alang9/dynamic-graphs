@@ -35,6 +35,7 @@ import           Data.Hashable                     (Hashable)
 import qualified Data.HashMap.Strict               as HMS
 import qualified Data.HashSet                      as HS
 import           Data.Maybe                        (fromMaybe)
+import Data.Monoid
 import           Data.Primitive.MutVar
 import qualified Data.Vector.Mutable               as VM
 
@@ -44,7 +45,7 @@ import qualified Data.Graph.Dynamic.Internal.Splay as Splay
 data L s v = L
   { numEdges :: !Int
   , allEdges :: !(HMS.HashMap v (HS.HashSet v))
-  , unLevels :: !(VM.MVector s (ET.Forest s v, HMS.HashMap v (HS.HashSet v)))
+  , unLevels :: !(VM.MVector s (ET.Forest (Sum Int) s v, HMS.HashMap v (HS.HashSet v)))
   }
 
 newtype Graph s v = Graph (MutVar s (L s v))
@@ -82,7 +83,7 @@ insertEdge (Graph levels) a b = do --traceShow (numEdges, VM.length unLevels, HS
         newUnLevels <- VM.take (logBase2 newNumEdges + 1) <$>
           VM.grow unLevels (max 0 $ logBase2 newNumEdges - oldNumLevels + 1)
         forM_ [oldNumLevels .. logBase2 newNumEdges] $ \levelIdx -> do
-          df <- ET.discreteForest $ map fst $ HMS.toList allEdges
+          df <- ET.discreteForest (\v1 v2 -> if v1 == v2 then Sum 1 else Sum 0) $ map fst $ HMS.toList allEdges
           VM.write newUnLevels levelIdx (df, HMS.empty)
         return newUnLevels
       -- traceShowM (VM.null levels')
@@ -126,7 +127,7 @@ deleteEdge (Graph levels) a b = do
       let newNumEdges = if cut then numEdges - 1 else numEdges
       writeMutVar levels L {allEdges = newAllEdges, numEdges = newNumEdges, ..}
   where
-    go :: VM.MVector s (ET.Forest s v, HMS.HashMap v (HS.HashSet v)) -> Int -> m Bool
+    go :: VM.MVector s (ET.Forest (Sum Int) s v, HMS.HashMap v (HS.HashSet v)) -> Int -> m Bool
     go unLevels idx = do
       -- traceShowM ("go", idx)
       (etf, edges0) <- VM.read unLevels idx
@@ -174,7 +175,7 @@ deleteEdge (Graph levels) a b = do
       propagateReplacement unLevels (idx - 1) (c, d)
 
     findReplacement ::
-      ET.Forest s v -> HMS.HashMap v (HS.HashSet v) -> Maybe (HMS.HashMap v (HS.HashSet v)) ->
+      ET.Forest (Sum Int) s v -> HMS.HashMap v (HS.HashSet v) -> Maybe (HMS.HashMap v (HS.HashSet v)) ->
       v -> [v] ->
       m (Maybe (v, v), HMS.HashMap v (HS.HashSet v), Maybe (HMS.HashMap v (HS.HashSet v)))
     findReplacement _ remainingEdges m'prevEdges _ [] = return (Nothing, remainingEdges, m'prevEdges)

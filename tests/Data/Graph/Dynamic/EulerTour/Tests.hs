@@ -20,7 +20,7 @@ import Data.Graph.Dynamic.Program
 
 prop_program :: IntTreeProgram -> ()
 prop_program (IntTreeProgram p) = runST $ do
-    f <- ET.new
+    f <- ET.new (\_ _ -> ())
     runProgram f p
 
 tests :: Test

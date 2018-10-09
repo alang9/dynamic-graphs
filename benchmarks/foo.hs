@@ -32,7 +32,7 @@ completeGraph n = do
 
 completeBinaryTree :: Int -> IO [(Maybe Bool, Maybe Bool)]
 completeBinaryTree n = do
-  etf <- ETF.discreteForest [0..n-1]
+  etf <- ETF.discreteForest (\_ _ -> ()) [0..n-1]
   mapM_ (\(x, y) -> ETF.insertEdge etf x y) edges
   mapM (\(x, y) -> do
            c1 <- ETF.connected etf x y

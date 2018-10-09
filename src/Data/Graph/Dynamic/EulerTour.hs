@@ -11,6 +11,7 @@
 module Data.Graph.Dynamic.EulerTour
     ( -- * Type
       Forest
+    , Graph
 
       -- * Construction
     , new
@@ -48,14 +49,17 @@ import           Data.Monoid
 import qualified Data.Tree                             as Tree
 import           Prelude                               hiding (print)
 
-newtype Forest s v = ETF
-    { _unETF :: HT.HashTable s v (HMS.HashMap v (Splay.Tree s (v, v) (Sum Int)))
+data Forest a s v = ETF
+    { edges :: {-# UNPACK#-} !(HT.HashTable s v (HMS.HashMap v (Splay.Tree s (v, v) a)))
+    , toMonoid :: v -> v -> a
     }
+
+type Graph = Forest ()
 
 insertTree
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Forest s v -> v -> v -> Splay.Tree s (v, v) (Sum Int) -> m ()
-insertTree (ETF ht) x y t = do
+    => Forest a s v -> v -> v -> Splay.Tree s (v, v) a -> m ()
+insertTree (ETF ht _) x y t = do
     mbMap <- HT.lookup ht x
     case mbMap of
         Nothing -> HT.insert ht x $ HMS.singleton y t
@@ -63,8 +67,8 @@ insertTree (ETF ht) x y t = do
 
 lookupTree
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Forest s v -> v -> v -> m (Maybe (Splay.Tree s (v, v) (Sum Int)))
-lookupTree (ETF ht) x y = do
+    => Forest a s v -> v -> v -> m (Maybe (Splay.Tree s (v, v) (a)))
+lookupTree (ETF ht _) x y = do
     mbMap <- HT.lookup ht x
     case mbMap of
         Nothing -> return Nothing
@@ -72,8 +76,8 @@ lookupTree (ETF ht) x y = do
 
 deleteTree
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Forest s v -> v -> v -> m ()
-deleteTree (ETF ht) x y = do
+    => Forest a s v -> v -> v -> m ()
+deleteTree (ETF ht _) x y = do
     mbMap <- HT.lookup ht x
     case mbMap of
         Nothing -> return ()
@@ -81,27 +85,29 @@ deleteTree (ETF ht) x y = do
             let m1 = HMS.delete y m0 in
             if HMS.null m1 then HT.delete ht x else HT.insert ht x m1
 
-new :: (PrimMonad m, s ~ PrimState m) => m (Forest s v)
-new = ETF <$> HT.new
+new :: (PrimMonad m, s ~ PrimState m) => (v -> v -> a) -> m (Forest a s v)
+new f = do
+  ht <- HT.new
+  return $ ETF ht f
 
 -- values in nodes must be unique
 fromTree
-    :: forall v m s. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Tree.Tree v -> m (Forest s v)
-fromTree tree = do
-    etf <- new
+    :: forall v m s a. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
+    => (v -> v -> a) -> Tree.Tree v -> m (Forest a s v)
+fromTree toMonoid tree = do
+    etf <- new toMonoid
     _ <- go etf tree
     return etf
   where
     go etf (Tree.Node l children) = do
-      node0 <- Splay.singleton (l, l) (Sum 1)
+      node0 <- Splay.singleton (l, l) (toMonoid l l)
       insertTree etf l l node0
       foldM (go' etf l) node0 children
 
     go' etf parent node0 tr@(Tree.Node l _) = do
       lnode     <- go etf tr
-      parentToL <- Splay.singleton (parent, l) (Sum 0)
-      lToParent <- Splay.singleton (l, parent) (Sum 0)
+      parentToL <- Splay.singleton (parent, l) (toMonoid parent l)
+      lToParent <- Splay.singleton (l, parent) (toMonoid l parent)
 
       node1 <- Splay.concat $ node0 NonEmpty.:| [parentToL, lnode, lToParent]
       insertTree etf l parent lToParent
@@ -110,17 +116,17 @@ fromTree tree = do
 
 discreteForest
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => [v] -> m (Forest s v)
-discreteForest vs = do
-    etf <- new
+    => (v -> v -> a) -> [v] -> m (Forest a s v)
+discreteForest toMonoid vs = do
+    etf <- new toMonoid
     forM_ vs $ \v -> do
-        node <- Splay.singleton (v, v) (Sum 1)
+        node <- Splay.singleton (v, v) (toMonoid v v)
         insertTree etf v v node
     return etf
 
 findRoot
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Forest s v -> v -> m (Maybe (Splay.Tree s (v, v) (Sum Int)))
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
+    => Forest a s v -> v -> m (Maybe (Splay.Tree s (v, v) a))
 findRoot etf v = do
     mbTree <- lookupTree etf v v
     case mbTree of
@@ -128,8 +134,8 @@ findRoot etf v = do
         Just t  -> Just <$> Splay.root t
 
 deleteEdge
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Forest s v -> v -> v -> m Bool
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
+    => Forest a s v -> v -> v -> m Bool
 deleteEdge etf a b = do
   mbAb <- lookupTree etf a b
   mbBa <- lookupTree etf b a
@@ -169,12 +175,12 @@ reroot t = do
 
 hasEdge
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Forest s v -> v -> v -> m Bool
+    => Forest a s v -> v -> v -> m Bool
 hasEdge etf a b = isJust <$> lookupTree etf a b
 
 connected
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Forest s v -> v -> v -> m (Maybe Bool)
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
+    => Forest a s v -> v -> v -> m (Maybe Bool)
 connected etf a b = do
   mbALoop <- lookupTree etf a a
   mbBLoop <- lookupTree etf b b
@@ -183,9 +189,9 @@ connected etf a b = do
     _                        -> return Nothing
 
 insertEdge
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Forest s v -> v -> v -> m Bool
-insertEdge etf a b = do
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
+    => Forest a s v -> v -> v -> m Bool
+insertEdge etf@ETF{..} a b = do
   mbALoop <- lookupTree etf a a
   mbBLoop <- lookupTree etf b b
   case (mbALoop, mbBLoop) of
@@ -194,8 +200,8 @@ insertEdge etf a b = do
         False -> do
 
           bLoop1            <- reroot bLoop
-          abNode            <- Splay.singleton (a, b) (Sum 0)
-          baNode            <- Splay.singleton (b, a) (Sum 0)
+          abNode            <- Splay.singleton (a, b) (toMonoid a b)
+          baNode            <- Splay.singleton (b, a) (toMonoid b a)
           bLoop2            <- abNode `Splay.cons` bLoop1
           bLoop3            <- bLoop2 `Splay.snoc` baNode
           (mbPreA, mbPostA) <- Splay.split aLoop
@@ -215,34 +221,34 @@ insertEdge etf a b = do
 
 insertVertex
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Forest s v -> v -> m ()
-insertVertex etf v = do
+    => Forest a s v -> v -> m ()
+insertVertex etf@ETF{..} v = do
     mbTree <- lookupTree etf v v
     case mbTree of
         Just  _ -> return ()  -- It's already there
         Nothing -> do
-            node <- Splay.singleton (v, v) (Sum 1)
+            node <- Splay.singleton (v, v) (toMonoid v v)
             insertTree etf v v node
 
 neighbours
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Forest s v -> v -> m [v]
-neighbours (ETF ht) x = do
+    => Forest a s v -> v -> m [v]
+neighbours (ETF ht _) x = do
     mbMap <- HT.lookup ht x
     case mbMap of
         Nothing -> return []
         Just m  -> return $ filter (/= x) $ map fst $ HMS.toList m
 
 deleteVertex
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Forest s v -> v -> m ()
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
+    => Forest a s v -> v -> m ()
 deleteVertex etf x = do
     nbs <- neighbours etf x
     forM_ nbs $ \y -> deleteEdge etf x y
     deleteTree etf x x
 
-print :: Show a => Forest RealWorld a -> IO ()
-print (ETF ht) = do
+print :: (Show a, Monoid b) => Forest b RealWorld a -> IO ()
+print (ETF ht _) = do
   maps <- map snd <$> HT.toList ht
   let trees = concatMap (map snd . HMS.toList) maps
   roots <- mapM Splay.root trees
@@ -252,7 +258,7 @@ print (ETF ht) = do
 
 componentSize
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Forest s v -> v -> m Int
+    => Forest (Sum Int) s v -> v -> m Int
 componentSize etf v = do
   mbTree <- lookupTree etf v v
   case mbTree of

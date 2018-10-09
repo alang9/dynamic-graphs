@@ -1,6 +1,8 @@
 {-# LANGUAGE BangPatterns      #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiWayIf        #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 module Data.Graph.Dynamic.Program
     ( Program
     , Instruction (..)
@@ -135,7 +137,7 @@ instance Interpreter Levels.Graph where
     deleteEdge      = Levels.deleteEdge
     connected f x y = fromMaybe False <$> Levels.connected f x y
 
-instance Interpreter ET.Forest where
+instance Interpreter ET.Graph where
     insertVertex     = ET.insertVertex
     insertEdge f x y = void $ ET.insertEdge f x y
     deleteVertex     = ET.deleteVertex
