@@ -15,15 +15,19 @@ module Data.Graph.Dynamic.Internal.Splay
     , root
     , aggregate
     , toList
+    , propagate
+    , isNil
 
     -- * Debugging only
+    , Tree' (..)
     , getRoot
     , freeze
     , print
     , assertInvariants
+    , splay
     ) where
 
-import           Control.Monad           (foldM, when)
+import           Control.Monad           (foldM, when, void)
 import           Control.Monad.Primitive (PrimMonad (..))
 import           Data.List.NonEmpty      (NonEmpty)
 import qualified Data.List.NonEmpty      as NonEmpty
@@ -63,6 +67,9 @@ nil = unsafeCoerce $ unsafePerformIO $ MutVar.newMutVar undefined
 {-# NOINLINE nil #-}
 
 type Tree s a v = MutVar s (Tree' s a v)
+
+isNil :: Tree s a v -> Bool
+isNil v = v == nil
 
 singleton :: PrimMonad m => a -> v -> m (Tree (PrimState m) a v)
 singleton tLabel tValue =
@@ -171,6 +178,15 @@ toList = go []
         acc1 <- if tRight == nil then return acc0 else go acc0 tRight
         let acc2 = tLabel : acc1
         if tLeft == nil then return acc2 else go acc2 tLeft
+
+propagate ::
+  (PrimMonad m, Monoid v) => Tree (PrimState m) a v -> m ()
+propagate xv = do
+  void $ splay xv
+  xv'@Tree {..} <- MutVar.readMutVar xv
+  lAgg <- if tLeft == nil then return mempty else aggregate tLeft
+  rAgg <- if tRight == nil then return mempty else aggregate tRight
+  MutVar.writeMutVar xv $ xv' {tAgg = lAgg <> tValue <> rAgg}
 
 splay
     :: (PrimMonad m, Monoid v)

@@ -29,8 +29,9 @@ module Data.Graph.Dynamic.EulerTour
     , deleteVertex
 
       -- * Advanced/internal operations
+    , insertEdge'
     , findRoot
-    , componentSize
+    , lookupTree
 
       -- * Debugging
     , print
@@ -188,15 +189,15 @@ connected etf a b = do
     (Just aLoop, Just bLoop) -> Just <$> Splay.connected aLoop bLoop
     _                        -> return Nothing
 
-insertEdge
+insertEdge'
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
-    => Forest a s v -> v -> v -> m Bool
-insertEdge etf@ETF{..} a b = do
+    => Forest a s v -> v -> v -> m (Maybe (Bool, Splay.Tree s (v, v) a, Splay.Tree s (v, v) a))
+insertEdge' etf@ETF{..} a b = do
   mbALoop <- lookupTree etf a a
   mbBLoop <- lookupTree etf b b
   case (mbALoop, mbBLoop) of
     (Just aLoop, Just bLoop) -> Splay.connected aLoop bLoop >>= \case
-        True -> return False
+        True -> return $ Just (False, aLoop, bLoop)
         False -> do
 
           bLoop1            <- reroot bLoop
@@ -215,9 +216,14 @@ insertEdge etf@ETF{..} a b = do
 
           insertTree etf a b abNode
           insertTree etf b a baNode
-          return True
+          return $ Just (True, aLoop, bLoop)
 
-    _ -> return False
+    _ -> return Nothing
+
+insertEdge
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
+    => Forest a s v -> v -> v -> m Bool
+insertEdge etf@ETF{..} a b = maybe False (\(s, _, _) -> s) <$> insertEdge' etf a b
 
 insertVertex
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
@@ -256,13 +262,3 @@ print (ETF ht _) = do
     Splay.print root
     putStrLn ""
 
-componentSize
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Forest (Sum Int) s v -> v -> m Int
-componentSize etf v = do
-  mbTree <- lookupTree etf v v
-  case mbTree of
-    Nothing -> return 0
-    Just tree -> do
-      root <- Splay.root tree
-      getSum <$> Splay.aggregate root

@@ -132,7 +132,7 @@ class Interpreter f where
 
 instance Interpreter Levels.Graph where
     insertVertex    = Levels.insertVertex
-    insertEdge      = Levels.insertEdge
+    insertEdge f x y = void $ Levels.insertEdge f x y
     deleteVertex    = Levels.deleteVertex
     deleteEdge      = Levels.deleteEdge
     connected f x y = fromMaybe False <$> Levels.connected f x y
