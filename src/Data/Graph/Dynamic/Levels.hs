@@ -60,7 +60,7 @@ memberEdgeSet x y = maybe False (y `HS.member`) . HMS.lookup x
 data L s v = L
   { numEdges :: !Int
   , allEdges :: !(EdgeSet v)
-  , unLevels :: !(VM.MVector s (ET.Forest (Sum Int) s v, EdgeSet v, EdgeSet v))
+  , unLevels :: !(VM.MVector s (ET.Forest (Sum Int) s v, EdgeSet v))
   }
 
 newtype Graph s v = Graph (MutVar s (L s v))
@@ -95,21 +95,21 @@ insertEdge (Graph levels) a b = do --traceShow (numEdges, VM.length unLevels, HS
           VM.grow unLevels (max 0 $ logBase2 newNumEdges - oldNumLevels + 1)
         forM_ [oldNumLevels .. logBase2 newNumEdges] $ \levelIdx -> do
           df <- ET.discreteForest (\v1 v2 -> if v1 == v2 then Sum 1 else Sum 0) $ map fst $ HMS.toList allEdges
-          VM.write newUnLevels levelIdx (df, HMS.empty, HMS.empty)
+          VM.write newUnLevels levelIdx (df, HMS.empty)
         return newUnLevels
       -- traceShowM (VM.null levels')
       if VM.null unLevels'
         then return ()
         else do
-          (thisEtf, thisTreeEdges, thisNonTreeEdges) <- VM.read unLevels' 0
+          (thisEtf, thisNonTreeEdges) <- VM.read unLevels' 0
           isTreeEdge <- ET.insertEdge thisEtf a b
           -- traceShowM $ (newNumEdges, m'newEtf)
           -- traceShowM $ (newNumEdges, "test3")
-          let !(!thisTreeEdges', !thisNonTreeEdges')
-                | isTreeEdge = (linkEdgeSet a b thisTreeEdges, thisNonTreeEdges)
-                | otherwise  = (thisTreeEdges, linkEdgeSet a b thisNonTreeEdges)
+          let !thisNonTreeEdges'
+                | isTreeEdge = thisNonTreeEdges
+                | otherwise  = linkEdgeSet a b thisNonTreeEdges
 
-          VM.write unLevels' 0 (thisEtf, thisTreeEdges', thisNonTreeEdges')
+          VM.write unLevels' 0 (thisEtf, thisNonTreeEdges')
           writeMutVar levels $ L
               {allEdges = newAllEdges, unLevels = unLevels',numEdges = newNumEdges}
 
@@ -120,7 +120,7 @@ connected (Graph levels) a b = do
   if VM.null unLevels
     then return (Just False)
     else do
-      (etf, _, _) <- VM.read unLevels 0
+      (etf, _) <- VM.read unLevels 0
       ET.connected etf a b
 
 hasEdge :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m Bool
@@ -140,20 +140,19 @@ deleteEdge (Graph levels) a b = do
       let newNumEdges = if cut then numEdges - 1 else numEdges
       writeMutVar levels L {allEdges = newAllEdges, numEdges = newNumEdges, ..}
   where
-    go :: VM.MVector s (ET.Forest (Sum Int) s v, EdgeSet v, EdgeSet v) -> Int -> m Bool
+    go :: VM.MVector s (ET.Forest (Sum Int) s v, EdgeSet v) -> Int -> m Bool
     go unLevels idx = do
       -- traceShowM ("go", idx)
-      (etf, treeEdges0, nonTreeEdges0) <- VM.read unLevels idx
+      (etf, nonTreeEdges0) <- VM.read unLevels idx
       cutResult <- ET.deleteEdge etf a b
       case cutResult of
         False -> do
           let !nonTreeEdges1 = cutEdgeSet a b nonTreeEdges0
-          VM.write unLevels idx (etf, treeEdges0, nonTreeEdges1)
+          VM.write unLevels idx (etf, nonTreeEdges1)
           if idx > 0 then go unLevels (idx - 1) else return False
         True -> do
           aSize <- ET.componentSize etf a
           bSize <- ET.componentSize etf b
-          let !treeEdges1 = cutEdgeSet a b treeEdges0
           let (smaller, _bigger) = if aSize <= bSize then (a, b) else (b, a)
           Just sRoot <- ET.findRoot etf smaller
 
@@ -181,45 +180,37 @@ deleteEdge (Graph levels) a b = do
           let (punished, replacementEdge) = findRep [] sIncidentEdges
 
           -- Increase the levels of the tree edges and the punished edges.
-          (treeEdges2, nonTreeEdges1) <- if
-              | idx + 1 >= VM.length unLevels -> return (treeEdges1, nonTreeEdges0)
+          nonTreeEdges1 <- if
+              | idx + 1 >= VM.length unLevels -> return nonTreeEdges0
               | otherwise -> do
-                    (incEtf, incTreeEdges0, incNonTreeEdges0) <-
-                        VM.read unLevels (idx + 1)
+                    (incEtf, incNonTreeEdges0) <- VM.read unLevels (idx + 1)
 
-                    let moveTreeEdge !(tes, !incTes) (x, y)
-                            | memberEdgeSet x y incTes = return (tes, incTes)
-                            | otherwise                = do
-                                ET.insertEdge incEtf x y
-                                let !tes'    = cutEdgeSet x y tes
-                                    !incTes' = linkEdgeSet x y incTes
-                                return (tes', incTes')
+                    let moveTreeEdge (x, y) =
+                            ET.insertEdge incEtf x y
 
                     let moveNonTreeEdge !(ntes, !incNTes) (x, y) =
                             (cutEdgeSet x y ntes, linkEdgeSet x y incNTes)
 
-                    !(!treeEdges2, !incTreeEdges1) <-
-                        foldM moveTreeEdge (treeEdges1, incTreeEdges0) sTreeEdges
-                    let !(!nonTreeEdges1, incNonTreeEdges1) = L.foldl'
+                    mapM_ moveTreeEdge sTreeEdges
+                    let !(!nonTreeEdges1, !incNonTreeEdges1) = L.foldl'
                             moveNonTreeEdge (nonTreeEdges0, incNonTreeEdges0) punished
 
-                    VM.write unLevels (idx + 1) (incEtf, incTreeEdges1, incNonTreeEdges1)
-                    return (treeEdges2, nonTreeEdges1)
+                    VM.write unLevels (idx + 1) (incEtf, incNonTreeEdges1)
+                    return nonTreeEdges1
 
           case replacementEdge of
             Nothing  -> do
-              VM.write unLevels idx (etf, treeEdges2, nonTreeEdges1)
+              VM.write unLevels idx (etf, nonTreeEdges1)
               if idx > 0 then go unLevels (idx - 1) else return True
             Just rep@(c, d) -> do
-              let !treeEdges3 = linkEdgeSet c d treeEdges2
-                  !nonTreeEdges2 = cutEdgeSet c d nonTreeEdges1
-              VM.write unLevels idx (etf, treeEdges3, nonTreeEdges2)
+              let !nonTreeEdges2 = cutEdgeSet c d nonTreeEdges1
+              VM.write unLevels idx (etf, nonTreeEdges2)
               ET.insertEdge etf c d
               propagateReplacement unLevels (idx - 1) rep
               return True
 
     propagateReplacement unLevels idx (c, d) = when (idx >= 0) $ do
-      (etf, _, _) <- VM.read unLevels idx
+      (etf, _) <- VM.read unLevels idx
       _ <- ET.deleteEdge etf a b
       _ <- ET.insertEdge etf c d
       -- TODO: mess with edges??
@@ -233,9 +224,9 @@ insertVertex (Graph g) x = do
         updateLevel i
             | i >= VM.length unLevels = return ()
             | otherwise               = do
-                (forest, t, nt) <- VM.read unLevels i
+                (forest, nt) <- VM.read unLevels i
                 ET.insertVertex forest x
-                VM.write unLevels i (forest, t, nt)
+                VM.write unLevels i (forest, nt)
                 updateLevel (i + 1)
 
     updateLevel 0
@@ -253,9 +244,9 @@ deleteVertex g@(Graph levels) x = do
         updateLevel i
             | i >= VM.length (unLevels l1) = return ()
             | otherwise                    = do
-                (forest, t, nt) <- VM.read (unLevels l1) i
+                (forest, nt) <- VM.read (unLevels l1) i
                 ET.deleteVertex forest x
-                VM.write (unLevels l1) i (forest, HMS.delete x t, HMS.delete x nt)
+                VM.write (unLevels l1) i (forest, HMS.delete x nt)
                 updateLevel (i + 1)
 
     updateLevel 0
