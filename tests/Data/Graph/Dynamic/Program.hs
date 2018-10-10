@@ -120,13 +120,13 @@ class Interpreter f where
         :: (Eq v, Hashable v, PrimMonad m)
         => f (PrimState m) v -> v -> m ()
     insertEdge
-        :: (Eq v, Hashable v, PrimMonad m)
+        :: (Eq v, Hashable v, PrimMonad m, Ord v)
         => f (PrimState m) v -> v -> v -> m ()
     deleteVertex
-        :: (Eq v, Hashable v, PrimMonad m)
+        :: (Eq v, Hashable v, PrimMonad m, Ord v)
         => f (PrimState m) v -> v -> m ()
     deleteEdge
-        :: (Eq v, Hashable v, PrimMonad m)
+        :: (Eq v, Hashable v, PrimMonad m, Ord v)
         => f (PrimState m) v -> v -> v -> m ()
     connected
         :: (Eq v, Hashable v, PrimMonad m)
@@ -147,7 +147,7 @@ instance Interpreter ET.Graph where
     connected f x y  = fromMaybe False <$> ET.connected f x y
 
 runProgram
-    :: (Eq v, Hashable v, Show v, PrimMonad m, Interpreter f)
+    :: (Eq v, Hashable v, Show v, PrimMonad m, Interpreter f, Ord v)
     => f (PrimState m) v -> Program v -> m ()
 runProgram f = go (0 :: Int)
   where

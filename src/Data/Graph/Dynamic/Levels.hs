@@ -36,6 +36,8 @@ import           Data.Hashable                     (Hashable)
 import qualified Data.HashMap.Strict               as HMS
 import qualified Data.HashSet                      as HS
 import qualified Data.List                         as L
+import Data.Map (Map)
+import qualified Data.Map as Map
 import           Data.Maybe                        (fromMaybe)
 import           Data.Monoid
 import           Data.Primitive.MutVar
@@ -45,7 +47,6 @@ import qualified Data.Vector.Mutable               as VM
 
 import qualified Data.Graph.Dynamic.EulerTour      as ET
 import qualified Data.Graph.Dynamic.Internal.Splay as Splay
-
 
 type EdgeSet v = HMS.HashMap v (HS.HashSet v)
 
@@ -66,19 +67,37 @@ nullEdgeSet v = maybe True HS.null . HMS.lookup v
 data L s v = L
   { numEdges :: !Int
   , allEdges :: !(EdgeSet v)
-  , unLevels :: !(VM.MVector s (ET.Forest Aggregate s v, EdgeSet v))
+  , unLevels :: !(VM.MVector s (ET.Forest (Aggregate s v) s v))
   }
 
 newtype Graph s v = Graph (MutVar s (L s v))
 
-data Aggregate
-  = Aggregate
-    { size :: {-# UNPACK #-} !Int
+data Aggregate s v
+  = EdgeAggregate
+    { eSize :: {-# UNPACK #-} !Int
     , hasNonTreeEdges :: {-# UNPACK #-} !Bool
-    } deriving (Show, Eq)
+    }
+  | VertexAggregate
+    { neighbours :: Map v (Splay.Tree s (v, v) (Aggregate s v))
+    } deriving (Eq)
 
-instance Semigroup Aggregate where
-  Aggregate s1 h1 <> Aggregate s2 h2 = Aggregate (s1 + s2) (h1 || h2)
+instance (Show v) => Show (Aggregate s v) where
+  show (EdgeAggregate s b) = unwords ["EdgeAggregate", show s, show b]
+  show (VertexAggregate n) = unwords ["VertexAggregate", show (Map.keys n)]
+
+hasNeighbours :: Aggregate s v -> Bool
+hasNeighbours (EdgeAggregate _ x) = x
+hasNeighbours (VertexAggregate xs) = not (Map.null xs)
+
+size :: Aggregate s v -> Int
+size (EdgeAggregate s _) = s
+size (VertexAggregate _) = 1
+
+instance Semigroup (Aggregate s v) where
+  EdgeAggregate s1 h1 <> EdgeAggregate s2 h2 = EdgeAggregate (s1 + s2) (h1 || h2)
+  VertexAggregate neighbours <> EdgeAggregate s2 h2 = EdgeAggregate (1 + s2) (not (Map.null neighbours) || h2)
+  EdgeAggregate s1 h1 <> VertexAggregate neighbours = EdgeAggregate (s1 + 1) (h1 || not (Map.null neighbours))
+  VertexAggregate neighbours1 <> VertexAggregate neighbours2 = EdgeAggregate 2 (not (Map.null neighbours1) || not (Map.null neighbours2))
 
 logBase2 :: Int -> Int
 logBase2 x = finiteBitSize x - 1 - countLeadingZeros x
@@ -95,8 +114,8 @@ fromVertices xs = do
   Graph <$> newMutVar L {..}
 
 -- TODO (jaspervdj): Kill Ord constraints in this module
-insertEdge :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m Bool
-insertEdge (Graph levels) a b = do --traceShow (numEdges, VM.length unLevels, HS.member (a, b) allEdges) $
+insertEdge :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => Graph s v -> v -> v -> m Bool
+insertEdge (Graph levels) a b = do
   L {..} <- readMutVar levels
   let !newAllEdges = linkEdgeSet a b allEdges
       !newNumEdges = numEdges + 1
@@ -106,27 +125,24 @@ insertEdge (Graph levels) a b = do --traceShow (numEdges, VM.length unLevels, HS
     else do
       unLevels' <- do
         let oldNumLevels = VM.length unLevels
-        newUnLevels <- VM.take (logBase2 newNumEdges + 1) <$>
-          VM.grow unLevels (max 0 $ logBase2 newNumEdges - oldNumLevels + 1)
-        forM_ [oldNumLevels .. logBase2 newNumEdges] $ \levelIdx -> do
-          df <- ET.discreteForest (\v1 v2 -> if v1 == v2 then Aggregate 1 False else Aggregate 0 False) $ map fst $ HMS.toList allEdges
-          VM.write newUnLevels levelIdx (df, HMS.empty)
+        newUnLevels <- VM.take (logBase2 newNumEdges + 2) <$>
+          VM.grow unLevels (max 0 $ logBase2 newNumEdges - oldNumLevels + 2)
+        forM_ [oldNumLevels .. logBase2 newNumEdges + 1] $ \levelIdx -> do
+          df <- ET.discreteForest (\v1 v2 -> if v1 == v2 then VertexAggregate Map.empty else VertexAggregate Map.empty) $ map fst $ HMS.toList allEdges
+          VM.write newUnLevels levelIdx df
         return newUnLevels
       if VM.null unLevels'
         then return $ error "insertEdge: should never happen"
         else do
-          (thisEtf, thisNonTreeEdges) <- VM.read unLevels' 0
+          thisEtf <- VM.read unLevels' 0
           m'insertResult <- ET.insertEdge' thisEtf a b
           case m'insertResult of
             Nothing -> error "insertEdge: should never happen"
             Just (newlyConnected, aLoop, bLoop) -> do
               when (not newlyConnected) $ do
-                Splay.updateValue aLoop $ Aggregate 1 True
-                Splay.updateValue bLoop $ Aggregate 1 True
-              let !thisNonTreeEdges'
-                    | newlyConnected = thisNonTreeEdges
-                    | otherwise  = linkEdgeSet a b thisNonTreeEdges
-              VM.write unLevels' 0 (thisEtf, thisNonTreeEdges')
+                Splay.modifyValue aLoop $ \(VertexAggregate n) -> VertexAggregate (Map.insert b bLoop n)
+                Splay.modifyValue bLoop $ \(VertexAggregate n) -> VertexAggregate (Map.insert a aLoop n)
+              VM.write unLevels' 0 thisEtf
               writeMutVar levels $ L
                   {allEdges = newAllEdges, unLevels = unLevels', numEdges = newNumEdges}
               return True
@@ -138,7 +154,7 @@ connected (Graph levels) a b = do
   if VM.null unLevels
     then return (Just False)
     else do
-      (etf, _) <- VM.read unLevels 0
+      etf <- VM.read unLevels 0
       ET.connected etf a b
 
 hasEdge :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m Bool
@@ -148,7 +164,7 @@ hasEdge (Graph levels) a b = do
 
 componentSize
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => ET.Forest Aggregate s v -> v -> m Int
+    => ET.Forest (Aggregate s v) s v -> v -> m Int
 componentSize etf v = do
   mbTree <- ET.lookupTree etf v v
   case mbTree of
@@ -157,7 +173,7 @@ componentSize etf v = do
       root <- Splay.root tree
       size <$> Splay.aggregate root
 
-deleteEdge :: forall m s v. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m ()
+deleteEdge :: forall m s v. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => Graph s v -> v -> v -> m ()
 deleteEdge (Graph levels) a b = do
   L {..} <- readMutVar levels
   let newAllEdges = cutEdgeSet a b allEdges
@@ -169,20 +185,16 @@ deleteEdge (Graph levels) a b = do
       let newNumEdges = if cut then numEdges - 1 else numEdges
       writeMutVar levels L {allEdges = newAllEdges, numEdges = newNumEdges, ..}
   where
-    go :: VM.MVector s (ET.Forest Aggregate s v, EdgeSet v) -> Int -> m Bool
+    go :: VM.MVector s (ET.Forest (Aggregate s v) s v) -> Int -> m Bool
     go unLevels idx = do
-      (etf, nonTreeEdges0) <- VM.read unLevels idx
+      etf <- VM.read unLevels idx
       cutResult <- ET.deleteEdge etf a b
       case cutResult of
         False -> do
-          let !nonTreeEdges1 = cutEdgeSet a b nonTreeEdges0
-          when (nullEdgeSet a nonTreeEdges1) $ do
-            Just aLoop <- ET.lookupTree etf a a
-            Splay.updateValue aLoop $ Aggregate 1 False
-          when (nullEdgeSet b nonTreeEdges1) $ do
-            Just bLoop <- ET.lookupTree etf b b
-            Splay.updateValue bLoop $ Aggregate 1 False
-          VM.write unLevels idx (etf, nonTreeEdges1)
+          Just aLoop <- ET.lookupTree etf a a
+          Splay.modifyValue aLoop $ \(VertexAggregate xs) -> VertexAggregate $ Map.delete b xs
+          Just bLoop <- ET.lookupTree etf b b
+          Splay.modifyValue bLoop $ \(VertexAggregate xs) -> VertexAggregate $ Map.delete a xs
           if idx > 0 then go unLevels (idx - 1) else return False
         True -> do
           aSize <- componentSize etf a
@@ -190,96 +202,77 @@ deleteEdge (Graph levels) a b = do
           let (smaller, _bigger) = if aSize <= bSize then (a, b) else (b, a)
           Just sRoot <- ET.findRoot etf smaller
 
-          let findRep' :: [(v, v)] -> EdgeSet v -> [(v, v)] -> m ([(v, v)], EdgeSet v, Maybe (v, v))
-              findRep' punish nonT [] = return (punish, nonT, Nothing)
-              findRep' punish nonT ((x, y):xs) = ET.connected etf x y >>= \case
+          let findRep' :: [(v, v)] -> [((v, Splay.Tree s (v, v) (Aggregate s v)), (v, Splay.Tree s (v, v) (Aggregate s v)))] -> m ([(v, v)], Maybe (v, v))
+              findRep' punish [] = return (punish, Nothing)
+              findRep' punish (((x, xLoop), (y, yLoop)):xs) = ET.connected etf x y >>= \case
                 Nothing -> error "should never happen"
                 Just True -> do
-                  let nonT' = cutEdgeSet x y nonT
-                  when (nullEdgeSet x nonT') $ do
-                    Just xLoop <- ET.lookupTree etf x x
-                    Splay.updateValue xLoop $ Aggregate 1 False
-                  when (nullEdgeSet y nonT') $ do
-                    Just yLoop <- ET.lookupTree etf y y
-                    Splay.updateValue yLoop $ Aggregate 1 False
-                  findRep' ((x, y):punish) nonT' xs
+                  Splay.modifyValue xLoop $ \(VertexAggregate xs) -> VertexAggregate $ Map.delete y xs
+                  Splay.modifyValue yLoop $ \(VertexAggregate xs) -> VertexAggregate $ Map.delete x xs
+                  findRep' ((x, y):punish) xs
                 Just False -> do
-                  let nonT' = cutEdgeSet x y nonT
-                  when (nullEdgeSet x nonT') $ do
-                    Just xLoop <- ET.lookupTree etf x x
-                    Splay.updateValue xLoop $ Aggregate 1 False
-                  when (nullEdgeSet y nonT') $ do
-                    Just yLoop <- ET.lookupTree etf y y
-                    Splay.updateValue yLoop $ Aggregate 1 False
-                  return (punish, nonT', Just (x, y))
+                  Splay.modifyValue xLoop $ \(VertexAggregate xs) -> VertexAggregate $ Map.delete y xs
+                  Splay.modifyValue yLoop $ \(VertexAggregate xs) -> VertexAggregate $ Map.delete x xs
+                  return (punish, Just (x, y))
 
-          let findRep :: [(v, v)] -> EdgeSet v -> Splay.Tree s (v, v) Aggregate -> m ([(v, v)], EdgeSet v, Maybe (v, v))
-              findRep punish nonT node = if Splay.isNil node
+          let findRep :: [(v, v)] -> Splay.Tree s (v, v) (Aggregate s v) -> m ([(v, v)], Maybe (v, v))
+              findRep punish node = if Splay.isNil node
                 then do
-                  return (punish, nonT, Nothing)
+                  return (punish, Nothing)
                 else do
                   node' <- readMutVar node
-                  case Splay.tAgg node' of
-                    Aggregate _ False -> return (punish, nonT, Nothing)
-                    Aggregate _ True -> case Splay.tValue node' of
-                      Aggregate _ True -> do
+                  case hasNeighbours (Splay.tAgg node') of
+                    False -> return (punish, Nothing)
+                    True -> case Splay.tValue node' of
+                      VertexAggregate neighbours | Map.size neighbours > 0 -> do
                         let (x, _y) = Splay.tLabel node'
-                        let neighbours = maybe HS.empty id $ HMS.lookup x nonT
-                        (punish', nonT', res) <- findRep' punish nonT (map ((,) x) $ HS.toList neighbours)
+                        (punish', res) <- findRep' punish $ map ((,) (x, node)) $ Map.toList neighbours
                         case res of
                           Nothing -> do
                             Splay.splay node
-                            findRep punish' nonT' node
-                          Just res -> return (punish', nonT', Just res)
-                      Aggregate _ False -> findRep punish nonT (Splay.tLeft node') >>= \case
-                        r@(_, _, Just _) -> return r
-                        (punish', nonT', Nothing) -> findRep punish' nonT' (Splay.tRight node')
-
+                            findRep punish' node
+                          Just res -> return (punish', Just res)
+                      _ -> findRep punish (Splay.tLeft node') >>= \case
+                        r@(_, Just _) -> return r
+                        (punish', Nothing) -> findRep punish' (Splay.tRight node')
 
           -- These are all edges, and vertices within the smaller tree.
           sTreeEdges <- Splay.toList sRoot
 
           -- Perform the search
-          (punished, nonTreeEdges1, replacementEdge) <- findRep [] nonTreeEdges0 sRoot
+          (punished, replacementEdge) <- findRep [] sRoot
           -- Increase the levels of the tree edges and the punished edges.
           if
               | idx + 1 >= VM.length unLevels -> return ()
               | otherwise -> do
-                    (incEtf, incNonTreeEdges0) <- VM.read unLevels (idx + 1)
+                    incEtf <- VM.read unLevels (idx + 1)
 
                     let moveTreeEdge (x, y) =
                             ET.insertEdge incEtf x y
 
-                    let moveNonTreeEdge !incNTes (x, y) = do
-                          let incNTes' = linkEdgeSet x y incNTes
-                          when (nullEdgeSet x incNTes) $ do
-                            Just xLoop <- ET.lookupTree incEtf x x
-                            Splay.updateValue xLoop $ Aggregate 1 True
-                          when (nullEdgeSet y incNTes) $ do
-                            Just yLoop <- ET.lookupTree incEtf y y
-                            Splay.updateValue yLoop $ Aggregate 1 True
-                          return incNTes'
+                    let moveNonTreeEdge (x, y) = do
+                          Just xLoop <- ET.lookupTree incEtf x x
+                          Just yLoop <- ET.lookupTree incEtf y y
+                          Splay.modifyValue xLoop $ \(VertexAggregate xs) -> VertexAggregate $ Map.insert y yLoop xs
+                          Splay.modifyValue yLoop $ \(VertexAggregate xs) -> VertexAggregate $ Map.insert x xLoop xs
 
                     mapM_ moveTreeEdge sTreeEdges
-                    !incNonTreeEdges1 <- foldM
-                            moveNonTreeEdge incNonTreeEdges0 punished
+                    !incNonTreeEdges1 <- mapM_
+                            moveNonTreeEdge punished
 
-                    VM.write unLevels (idx + 1) (incEtf, incNonTreeEdges1)
+                    VM.write unLevels (idx + 1) incEtf
                     return ()
 
           case replacementEdge of
             Nothing  -> do
-              VM.write unLevels idx (etf, nonTreeEdges1)
               if idx > 0 then go unLevels (idx - 1) else return True
             Just rep@(c, d) -> do
-              let !nonTreeEdges2 = cutEdgeSet c d nonTreeEdges1
-              VM.write unLevels idx (etf, nonTreeEdges2)
               ET.insertEdge etf c d
               propagateReplacement unLevels (idx - 1) rep
               return True
 
     propagateReplacement unLevels idx (c, d) = when (idx >= 0) $ do
-      (etf, _) <- VM.read unLevels idx
+      etf <- VM.read unLevels idx
       _ <- ET.deleteEdge etf a b
       _ <- ET.insertEdge etf c d
       -- TODO: mess with edges??
@@ -293,16 +286,15 @@ insertVertex (Graph g) x = do
         updateLevel i
             | i >= VM.length unLevels = return ()
             | otherwise               = do
-                (forest, nt) <- VM.read unLevels i
+                forest <- VM.read unLevels i
                 ET.insertVertex forest x
-                VM.write unLevels i (forest, nt)
                 updateLevel (i + 1)
 
     updateLevel 0
     writeMutVar g $ l {allEdges = newAllEdges}
 
 deleteVertex
-    :: (Eq v, Hashable v, PrimMonad m) => Graph (PrimState m) v -> v -> m ()
+    :: (Eq v, Hashable v, PrimMonad m, Ord v) => Graph (PrimState m) v -> v -> m ()
 deleteVertex g@(Graph levels) x = do
     l0 <- readMutVar levels
     let neighbours = fromMaybe HS.empty (HMS.lookup x (allEdges l0))
@@ -313,9 +305,8 @@ deleteVertex g@(Graph levels) x = do
         updateLevel i
             | i >= VM.length (unLevels l1) = return ()
             | otherwise                    = do
-                (forest, nt) <- VM.read (unLevels l1) i
+                forest <- VM.read (unLevels l1) i
                 ET.deleteVertex forest x
-                VM.write (unLevels l1) i (forest, HMS.delete x nt)
                 updateLevel (i + 1)
 
     updateLevel 0

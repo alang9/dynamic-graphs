@@ -16,6 +16,7 @@ module Data.Graph.Dynamic.Internal.Splay
     , aggregate
     , toList
     , updateValue
+    , modifyValue
     , isNil
 
     -- * Debugging only
@@ -186,6 +187,16 @@ updateValue xv v = do
   xv'@Tree{..} <- MutVar.readMutVar xv
   lAgg <- if tLeft == nil then return id else (<>) <$> aggregate tLeft
   rAgg <- if tRight == nil then return id else flip (<>) <$> aggregate tRight
+  MutVar.writeMutVar xv $ xv' {tValue = v, tAgg = rAgg $ lAgg v}
+
+modifyValue ::
+  (PrimMonad m, Semigroup v) => Tree (PrimState m) a v -> (v -> v) -> m ()
+modifyValue xv f = do
+  splay xv
+  xv'@Tree{..} <- MutVar.readMutVar xv
+  lAgg <- if tLeft == nil then return id else (<>) <$> aggregate tLeft
+  rAgg <- if tRight == nil then return id else flip (<>) <$> aggregate tRight
+  let v = f tValue
   MutVar.writeMutVar xv $ xv' {tValue = v, tAgg = rAgg $ lAgg v}
 
 splay
