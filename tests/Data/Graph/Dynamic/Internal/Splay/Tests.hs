@@ -81,6 +81,19 @@ prop_concat appends = runST $ do
     l <- Splay.toList t
     return $ l QC.=== concatMap appendsToList (NonEmpty.toList appends)
 
+prop_updateValue :: Appends Int String -> [(Int, String)] -> QC.Property
+prop_updateValue appends updates = runST $ do
+    (t, nodes) <- appendsToTree appends
+    Splay.assertInvariants t
+    let l = NonEmpty.length nodes
+    forM_ updates $ \(idx, str) -> do
+      let n = nodes NonEmpty.!! mod idx l
+      Splay.updateValue n str
+      Splay.assertInvariants n
+    Splay.splay t
+    Splay.assertInvariants t
+    return $ True QC.=== True
+
 prop_split :: Appends Int String -> Int -> QC.Property
 prop_split appends idx = runST $ do
     (t, nodes) <- appendsToTree appends

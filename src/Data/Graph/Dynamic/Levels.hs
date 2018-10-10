@@ -75,7 +75,7 @@ data Aggregate
   = Aggregate
     { size :: {-# UNPACK #-} !Int
     , hasNonTreeEdges :: {-# UNPACK #-} !Bool
-    } deriving (Show)
+    } deriving (Show, Eq)
 
 instance Semigroup Aggregate where
   Aggregate s1 h1 <> Aggregate s2 h2 = Aggregate (s1 + s2) (h1 || h2)
@@ -124,10 +124,8 @@ insertEdge (Graph levels) a b = do --traceShow (numEdges, VM.length unLevels, HS
             Nothing -> error "insertEdge: should never happen"
             Just (newlyConnected, aLoop, bLoop) -> do
               when (not newlyConnected) $ do
-                modifyMutVar aLoop $ \aLoop' -> aLoop' {Splay.tValue = Aggregate 1 True}
-                Splay.propagate aLoop
-                modifyMutVar bLoop $ \bLoop' -> bLoop' {Splay.tValue = Aggregate 1 True}
-                Splay.propagate bLoop
+                Splay.updateValue aLoop $ Aggregate 1 True
+                Splay.updateValue bLoop $ Aggregate 1 True
               let !thisNonTreeEdges'
                     | newlyConnected = thisNonTreeEdges
                     | otherwise  = linkEdgeSet a b thisNonTreeEdges
@@ -183,12 +181,10 @@ deleteEdge (Graph levels) a b = do
           let !nonTreeEdges1 = cutEdgeSet a b nonTreeEdges0
           when (nullEdgeSet a nonTreeEdges1) $ do
             Just aLoop <- ET.lookupTree etf a a
-            modifyMutVar' aLoop $ \aLoop' -> aLoop' {Splay.tValue = Aggregate 1 False}
-            Splay.propagate aLoop
+            Splay.updateValue aLoop $ Aggregate 1 False
           when (nullEdgeSet b nonTreeEdges1) $ do
             Just bLoop <- ET.lookupTree etf b b
-            modifyMutVar' bLoop $ \bLoop' -> bLoop' {Splay.tValue = Aggregate 1 False}
-            Splay.propagate bLoop
+            Splay.updateValue bLoop $ Aggregate 1 False
           VM.write unLevels idx (etf, nonTreeEdges1)
           if idx > 0 then go unLevels (idx - 1) else return False
         True -> do
@@ -205,23 +201,19 @@ deleteEdge (Graph levels) a b = do
                   let nonT' = cutEdgeSet x y nonT
                   when (nullEdgeSet x nonT') $ do
                     Just xLoop <- ET.lookupTree etf x x
-                    modifyMutVar' xLoop $ \xLoop' -> xLoop' {Splay.tValue = Aggregate 1 False}
-                    Splay.propagate xLoop
+                    Splay.updateValue xLoop $ Aggregate 1 False
                   when (nullEdgeSet y nonT') $ do
                     Just yLoop <- ET.lookupTree etf y y
-                    modifyMutVar' yLoop $ \yLoop' -> yLoop' {Splay.tValue = Aggregate 1 False}
-                    Splay.propagate yLoop
+                    Splay.updateValue yLoop $ Aggregate 1 False
                   findRep' ((x, y):punish) nonT' xs
                 Just False -> do
                   let nonT' = cutEdgeSet x y nonT
                   when (nullEdgeSet x nonT') $ do
                     Just xLoop <- ET.lookupTree etf x x
-                    modifyMutVar' xLoop $ \xLoop' -> xLoop' {Splay.tValue = Aggregate 1 False}
-                    Splay.propagate xLoop
+                    Splay.updateValue xLoop $ Aggregate 1 False
                   when (nullEdgeSet y nonT') $ do
                     Just yLoop <- ET.lookupTree etf y y
-                    modifyMutVar' yLoop $ \yLoop' -> yLoop' {Splay.tValue = Aggregate 1 False}
-                    Splay.propagate yLoop
+                    Splay.updateValue yLoop $ Aggregate 1 False
                   return (punish, nonT', Just (x, y))
 
           let findRep :: [(v, v)] -> EdgeSet v -> Splay.Tree s (v, v) Aggregate -> m ([(v, v)], EdgeSet v, Maybe (v, v))
@@ -265,12 +257,10 @@ deleteEdge (Graph levels) a b = do
                           let incNTes' = linkEdgeSet x y incNTes
                           when (nullEdgeSet x incNTes) $ do
                             Just xLoop <- ET.lookupTree incEtf x x
-                            modifyMutVar' xLoop $ \xLoop' -> xLoop' {Splay.tValue = Aggregate 1 True}
-                            Splay.propagate xLoop
+                            Splay.updateValue xLoop $ Aggregate 1 True
                           when (nullEdgeSet y incNTes) $ do
                             Just yLoop <- ET.lookupTree incEtf y y
-                            modifyMutVar' yLoop $ \yLoop' -> yLoop' {Splay.tValue = Aggregate 1 True}
-                            Splay.propagate yLoop
+                            Splay.updateValue yLoop $ Aggregate 1 True
                           return incNTes'
 
                     mapM_ moveTreeEdge sTreeEdges

@@ -15,7 +15,7 @@ module Data.Graph.Dynamic.Internal.Splay
     , root
     , aggregate
     , toList
-    , propagate
+    , updateValue
     , isNil
 
     -- * Debugging only
@@ -179,14 +179,14 @@ toList = go []
         let acc2 = tLabel : acc1
         if tLeft == nil then return acc2 else go acc2 tLeft
 
-propagate ::
-  (PrimMonad m, Monoid v) => Tree (PrimState m) a v -> m ()
-propagate xv = do
-  void $ splay xv
-  xv'@Tree {..} <- MutVar.readMutVar xv
+updateValue ::
+  (PrimMonad m, Monoid v) => Tree (PrimState m) a v -> v -> m ()
+updateValue xv v = do
+  splay xv
+  xv'@Tree{..} <- MutVar.readMutVar xv
   lAgg <- if tLeft == nil then return mempty else aggregate tLeft
   rAgg <- if tRight == nil then return mempty else aggregate tRight
-  MutVar.writeMutVar xv $ xv' {tAgg = lAgg <> tValue <> rAgg}
+  MutVar.writeMutVar xv $ xv' {tValue = v, tAgg = lAgg <> v <> rAgg}
 
 splay
     :: (PrimMonad m, Monoid v)
