@@ -93,7 +93,7 @@ new f = do
 
 -- values in nodes must be unique
 fromTree
-    :: forall v m s a. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
+    :: forall v m s a. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Semigroup a)
     => (v -> v -> a) -> Tree.Tree v -> m (Forest a s v)
 fromTree toMonoid tree = do
     etf <- new toMonoid
@@ -126,7 +126,7 @@ discreteForest toMonoid vs = do
     return etf
 
 findRoot
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Semigroup a)
     => Forest a s v -> v -> m (Maybe (Splay.Tree s (v, v) a))
 findRoot etf v = do
     mbTree <- lookupTree etf v v
@@ -135,7 +135,7 @@ findRoot etf v = do
         Just t  -> Just <$> Splay.root t
 
 deleteEdge
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Semigroup a)
     => Forest a s v -> v -> v -> m Bool
 deleteEdge etf a b = do
   mbAb <- lookupTree etf a b
@@ -167,7 +167,7 @@ deleteEdge etf a b = do
 -- | reroot the represented tree by shifting the euler tour.  Returns the new
 -- root.
 reroot
-    :: (PrimMonad m, s ~ PrimState m, Monoid v)
+    :: (PrimMonad m, s ~ PrimState m, Semigroup v)
     => Splay.Tree s a v -> m (Splay.Tree s a v)
 reroot t = do
     (mbPre, mbPost) <- Splay.split t
@@ -180,7 +180,7 @@ hasEdge
 hasEdge etf a b = isJust <$> lookupTree etf a b
 
 connected
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Semigroup a)
     => Forest a s v -> v -> v -> m (Maybe Bool)
 connected etf a b = do
   mbALoop <- lookupTree etf a a
@@ -190,7 +190,7 @@ connected etf a b = do
     _                        -> return Nothing
 
 insertEdge'
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Semigroup a)
     => Forest a s v -> v -> v -> m (Maybe (Bool, Splay.Tree s (v, v) a, Splay.Tree s (v, v) a))
 insertEdge' etf@ETF{..} a b = do
   mbALoop <- lookupTree etf a a
@@ -221,7 +221,7 @@ insertEdge' etf@ETF{..} a b = do
     _ -> return Nothing
 
 insertEdge
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Semigroup a)
     => Forest a s v -> v -> v -> m Bool
 insertEdge etf@ETF{..} a b = maybe False (\(s, _, _) -> s) <$> insertEdge' etf a b
 
@@ -246,14 +246,14 @@ neighbours (ETF ht _) x = do
         Just m  -> return $ filter (/= x) $ map fst $ HMS.toList m
 
 deleteVertex
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Semigroup a)
     => Forest a s v -> v -> m ()
 deleteVertex etf x = do
     nbs <- neighbours etf x
     forM_ nbs $ \y -> deleteEdge etf x y
     deleteTree etf x x
 
-print :: (Show a, Monoid b) => Forest b RealWorld a -> IO ()
+print :: (Show a, Semigroup b) => Forest b RealWorld a -> IO ()
 print (ETF ht _) = do
   maps <- map snd <$> HT.toList ht
   let trees = concatMap (map snd . HMS.toList) maps

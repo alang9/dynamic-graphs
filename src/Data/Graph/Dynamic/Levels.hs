@@ -80,9 +80,6 @@ data Aggregate
 instance Semigroup Aggregate where
   Aggregate s1 h1 <> Aggregate s2 h2 = Aggregate (s1 + s2) (h1 || h2)
 
-instance Monoid Aggregate where
-  mempty = Aggregate 0 False
-
 logBase2 :: Int -> Int
 logBase2 x = finiteBitSize x - 1 - countLeadingZeros x
 
