@@ -4,6 +4,7 @@ module Data.Graph.Dynamic.Internal.Splay.Tests
     ( tests
     ) where
 
+import Control.Monad
 import           Control.Monad.Primitive              (PrimMonad (..))
 import           Control.Monad.ST                     (runST)
 import qualified Data.Graph.Dynamic.Internal.Splay    as Splay
@@ -79,6 +80,18 @@ prop_concat appends = runST $ do
 
     l <- Splay.toList t
     return $ l QC.=== concatMap appendsToList (NonEmpty.toList appends)
+
+prop_split :: Appends Int String -> Int -> QC.Property
+prop_split appends idx = runST $ do
+    (t, nodes) <- appendsToTree appends
+    Splay.assertInvariants t
+    let l = NonEmpty.length nodes
+    let n = nodes NonEmpty.!! mod idx l
+    (ml, mr) <- Splay.split n
+    forM_ ml $ Splay.assertInvariants
+    forM_ mr $ Splay.assertInvariants
+    Splay.assertInvariants n
+    return $ True QC.=== True
 
 tests :: Test
 tests = $(testGroupGenerator)

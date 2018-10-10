@@ -129,6 +129,7 @@ split x = do
     Tree {..} <- MutVar.readMutVar x
     when (tLeft /= nil) (removeParent tLeft)  -- Works even if l is x
     when (tRight /= nil) (removeParent tRight)
+    MutVar.writeMutVar x $ Tree {tAgg = tValue, ..}
     removeLeft  x
     removeRight x
     return
