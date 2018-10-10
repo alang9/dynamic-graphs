@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns      #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiWayIf        #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -27,12 +28,13 @@ import qualified Data.Graph.Dynamic.Levels    as Levels
 import qualified Data.Graph.Dynamic.Slow      as Slow
 import           Data.Hashable                (Hashable)
 import qualified Data.HashSet                 as HS
-import           Data.List                    (intersperse, (\\))
+import           Data.List                    (intersperse, (\\), inits)
 import           Data.Maybe                   (fromMaybe)
 import           Data.Monoid                  ((<>))
 import qualified Data.Text                    as T
 import qualified Data.Text.Lazy               as TL
 import qualified Data.Text.Lazy.Builder       as TLB
+import GHC.Generics
 import qualified Test.QuickCheck              as QC
 import           Text.Read                    (readMaybe)
 
@@ -168,18 +170,20 @@ runProgram f = go (0 :: Int)
         go (i + 1) instrs
 
 newtype IntTreeProgram = IntTreeProgram {unIntTreeProgram :: Program Int}
-    deriving (Show)
+    deriving (Show, Generic)
 
 instance QC.Arbitrary IntTreeProgram where
     arbitrary = QC.sized $ \size -> fmap IntTreeProgram $
         genProgram True size Slow.empty [1 ..]
+    shrink (IntTreeProgram xs) = [IntTreeProgram p | p <- inits xs, length p < length xs]
 
 newtype IntGraphProgram = IntGraphProgram {unIntGraphProgram :: Program Int}
-    deriving (Show)
+    deriving (Show, Generic)
 
 instance QC.Arbitrary IntGraphProgram where
     arbitrary = QC.sized $ \size -> fmap IntGraphProgram $
         genProgram False size Slow.empty [1 ..]
+    shrink (IntGraphProgram xs) = [IntGraphProgram p | p <- inits xs, length p < length xs]
 
 --------------------------------------------------------------------------------
 
