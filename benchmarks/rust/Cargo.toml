@@ -1,0 +1,8 @@
+[package]
+name = "rust"
+version = "0.1.0"
+authors = ["Alex Lang <me@alang.ca>"]
+
+[dependencies]
+outils = "0.1.2"
+criterion = "0.2.5"
