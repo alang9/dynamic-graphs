@@ -7,13 +7,15 @@ import           Control.DeepSeq
 import           Control.Monad.Primitive            (RealWorld)
 import qualified Data.Graph.Dynamic.EulerTour       as ETF
 import qualified Data.Graph.Dynamic.Internal.Random as Random
+import           Data.Graph.Dynamic.Internal.Tree   (Vertex (..))
 import qualified Data.Graph.Dynamic.Levels          as Levels
 
 main :: IO ()
 main = do
-  foo <- completeGraph 250
+  foo <- completeBinaryTree 250
   return $ rnf foo
 
+{-
 completeGraph :: Int -> IO [(Maybe Bool, Maybe Bool)]
 completeGraph n = do
   levels <- Levels.fromVertices vertices
@@ -32,11 +34,12 @@ completeGraph n = do
     addV3 (x1, y1, z1) (x2, y2, z2) = (x1 + x2, y1 + y2, z1 + z2)
     valid (x, y, z) = x >= 0 && x < n && y >= 0 && y < n && z >= 0 && z < n
     edges = [(x, y) | x <- vertices, d <- adjVecs, let y = addV3 x d, valid y]
+-}
 
 completeBinaryTree :: Int -> IO [(Maybe Bool, Maybe Bool)]
 completeBinaryTree n = do
-  etf <- ETF.discreteForest (\_ _ -> ()) [0..n-1]
-    :: IO (ETF.Graph Random.Tree RealWorld Int)
+  etf <- ETF.discreteForest $ map Vertex [0..n-1]
+    :: IO (ETF.Graph Random.Tree RealWorld)
   mapM_ (\(x, y) -> ETF.insertEdge etf x y) edges
   mapM (\(x, y) -> do
            c1 <- ETF.connected etf x y
@@ -46,4 +49,4 @@ completeBinaryTree n = do
        ) edges
   return []
   where
-    edges = [(x, y) | x <- [0..n-1], y <- filter (< n) [2 * x, 2 * x + 1]]
+    edges = [(Vertex x, Vertex y) | x <- [0..n-1], y <- filter (< n) [2 * x, 2 * x + 1]]

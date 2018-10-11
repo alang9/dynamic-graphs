@@ -22,7 +22,7 @@ import           Data.Proxy              (Proxy)
 import           GHC.Generics            (Generic)
 import           Prelude                 hiding (concat)
 
-newtype Vertex = Vertex Int
+newtype Vertex = Vertex {unVertex :: Int}
     deriving (Eq, Hashable, Ord, Show)
 
 data Edge = Edge {-# UNPACK #-} !Int {-# UNPACK #-} !Int

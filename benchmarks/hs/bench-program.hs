@@ -7,11 +7,11 @@ import qualified Data.Text.Lazy.IO                  as TL
 
 main :: IO ()
 main = do
-    errOrProgram <- Program.decodeProgram Program.decodeInt <$> TL.getContents
+    errOrProgram <- Program.decodeProgram <$> TL.getContents
     program <- either fail return errOrProgram
 
     Crit.defaultMain
         [ Crit.bench "levels" $ Crit.nfIO $ do
-            levels <- Levels.new :: IO (Levels.Graph Random.Tree RealWorld Int)
-            Program.runProgram levels (program :: Program.Program Int)
+            levels <- Levels.new :: IO (Levels.Graph Random.Tree RealWorld)
+            Program.runProgram levels (program :: Program.Program)
         ]

@@ -23,10 +23,9 @@ module Data.Graph.Dynamic.Program
 import           Control.Monad                    (void, when)
 import           Control.Monad.Primitive          (PrimMonad (..))
 import qualified Data.Graph.Dynamic.EulerTour     as ET
-import           Data.Graph.Dynamic.Internal.Tree (Tree)
+import           Data.Graph.Dynamic.Internal.Tree (Tree, Vertex (..))
 import qualified Data.Graph.Dynamic.Levels        as Levels
 import qualified Data.Graph.Dynamic.Slow          as Slow
-import           Data.Hashable                    (Hashable)
 import qualified Data.HashSet                     as HS
 import           Data.List                        (intersperse, (\\))
 import           Data.Maybe                       (fromMaybe)
@@ -37,23 +36,22 @@ import qualified Data.Text.Lazy.Builder           as TLB
 import qualified Test.QuickCheck                  as QC
 import           Text.Read                        (readMaybe)
 
-type Program v = [Instruction v]
+type Program = [Instruction]
 
-data Instruction v
-    = InsertVertex v
-    | InsertEdge v v
-    | DeleteVertex v
-    | DeleteEdge v v
-    | Connected v v Bool
+data Instruction
+    = InsertVertex Vertex
+    | InsertEdge Vertex Vertex
+    | DeleteVertex Vertex
+    | DeleteEdge Vertex Vertex
+    | Connected Vertex Vertex Bool
     deriving (Show)
 
 genProgram
-    :: (Eq v, Hashable v)
-    => Bool          -- ^ Acyclic only
-    -> Int           -- ^ Size of program
-    -> Slow.Graph v  -- ^ State of the graph
-    -> [v]           -- ^ Pool of Vs to use
-    -> QC.Gen (Program v)
+    :: Bool               -- ^ Acyclic only
+    -> Int                -- ^ Size of program
+    -> Slow.Graph Vertex  -- ^ State of the graph
+    -> [Vertex]           -- ^ Pool of Vs to use
+    -> QC.Gen Program
 genProgram _ size _ _ | size <= 0 = return []
 genProgram acyclic size0 graph0 vs0 = do
     let hasSomeVertices = case Slow.vertices graph0 of
@@ -116,20 +114,15 @@ genProgram acyclic size0 graph0 vs0 = do
 -- | A graph that we can interpret the program against.
 class Interpreter f where
     insertVertex
-        :: (Eq v, Hashable v, PrimMonad m)
-        => f (PrimState m) v -> v -> m ()
+        :: (PrimMonad m) => f (PrimState m) -> Vertex -> m ()
     insertEdge
-        :: (Eq v, Hashable v, PrimMonad m)
-        => f (PrimState m) v -> v -> v -> m ()
+        :: (PrimMonad m) => f (PrimState m) -> Vertex -> Vertex -> m ()
     deleteVertex
-        :: (Eq v, Hashable v, PrimMonad m)
-        => f (PrimState m) v -> v -> m ()
+        :: (PrimMonad m) => f (PrimState m) -> Vertex -> m ()
     deleteEdge
-        :: (Eq v, Hashable v, PrimMonad m)
-        => f (PrimState m) v -> v -> v -> m ()
+        :: (PrimMonad m) => f (PrimState m) -> Vertex -> Vertex -> m ()
     connected
-        :: (Eq v, Hashable v, PrimMonad m)
-        => f (PrimState m) v -> v -> v -> m Bool
+        :: (PrimMonad m) => f (PrimState m) -> Vertex -> Vertex -> m Bool
 
 instance Tree t => Interpreter (Levels.Graph t) where
     insertVertex    = Levels.insertVertex
@@ -146,8 +139,7 @@ instance Tree t => Interpreter (ET.Graph t) where
     connected f x y  = fromMaybe False <$> ET.connected f x y
 
 runProgram
-    :: (Eq v, Hashable v, Show v, PrimMonad m, Interpreter f)
-    => f (PrimState m) v -> Program v -> m ()
+    :: (PrimMonad m, Interpreter f) => f (PrimState m) -> Program -> m ()
 runProgram f = go (0 :: Int)
   where
     go _i [] = return ()
@@ -168,29 +160,28 @@ runProgram f = go (0 :: Int)
 
         go (i + 1) instrs
 
-newtype IntTreeProgram = IntTreeProgram {unIntTreeProgram :: Program Int}
+newtype IntTreeProgram = IntTreeProgram {unIntTreeProgram :: Program}
     deriving (Show)
 
 instance QC.Arbitrary IntTreeProgram where
     arbitrary = QC.sized $ \size -> fmap IntTreeProgram $
-        genProgram True size Slow.empty [1 ..]
+        genProgram True size Slow.empty $ map Vertex [1 ..]
 
-newtype IntGraphProgram = IntGraphProgram {unIntGraphProgram :: Program Int}
+newtype IntGraphProgram = IntGraphProgram {unIntGraphProgram :: Program}
     deriving (Show)
 
 instance QC.Arbitrary IntGraphProgram where
     arbitrary = QC.sized $ \size -> fmap IntGraphProgram $
-        genProgram False size Slow.empty [1 ..]
+        genProgram False size Slow.empty $ map Vertex [1 ..]
 
 --------------------------------------------------------------------------------
 
-encodeProgram
-    :: (v -> T.Text) -> Program v -> TL.Text
-encodeProgram encodeVertex =
+encodeProgram :: Program -> TL.Text
+encodeProgram =
     TLB.toLazyText . mconcat . intersperse "\n" . map encodeInstruction
   where
     x <+> y = x <> " " <> y
-    v       = TLB.fromText . encodeVertex
+    v       = TLB.fromText . encodeInt . unVertex
     b False = "false"
     b True  = "true"
 
@@ -201,11 +192,11 @@ encodeProgram encodeVertex =
     encodeInstruction (Connected x y e) = "connected" <+> v x <+> v y <+> b e
 
 decodeProgram
-    :: (T.Text -> Either String v) -> TL.Text -> Either String (Program v)
-decodeProgram decodeVertex =
+    :: TL.Text -> Either String Program
+decodeProgram =
     mapM decodeInstruction . TL.lines
   where
-    v         = decodeVertex
+    v         = fmap Vertex . decodeInt
     b "false" = return False
     b "true"  = return True
     b x       = Left $ "Can't decode bool: " ++ T.unpack x

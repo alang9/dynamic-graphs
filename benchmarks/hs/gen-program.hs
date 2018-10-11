@@ -14,7 +14,7 @@ main = do
         [sizeStr] | Just size <- readMaybe sizeStr -> do
             Program.IntGraphProgram sample <- head <$>
                 QC.sample' (QC.resize size QC.arbitrary)
-            TL.putStrLn $ Program.encodeProgram Program.encodeInt sample
+            TL.putStrLn $ Program.encodeProgram sample
         _ -> do
             IO.hPutStrLn IO.stderr $ "Usage: " ++ progName ++ " size"
             exitFailure
