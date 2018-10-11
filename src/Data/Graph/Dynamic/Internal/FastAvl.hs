@@ -26,7 +26,7 @@ module Data.Graph.Dynamic.Internal.FastAvl
 
 import           Control.Monad                    (foldM, when)
 import           Control.Monad.Primitive          (PrimMonad (..))
-import qualified Data.Graph.Dynamic.Internal.Tree as Class
+-- import qualified Data.Graph.Dynamic.Internal.Tree as Class
 import           Data.List.NonEmpty               (NonEmpty)
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Monoid                      ((<>))
@@ -488,6 +488,7 @@ assertRoot x = do
     p <- MutVar.readMutVar (tParent x)
     when (p /= x) $ fail "not the root"
 
+{-
 data TreeGen s = TreeGen
 
 instance Class.Tree Tree where
@@ -507,3 +508,4 @@ instance Class.TestTree Tree where
     assertInvariants = assertInvariants
     assertSingleton  = assertSingleton
     assertRoot       = assertRoot
+-}

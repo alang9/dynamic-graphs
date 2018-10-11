@@ -23,12 +23,10 @@ module Data.Graph.Dynamic.Internal.Random
     , assertRoot
     ) where
 
-import           Control.Monad                    (foldM, when)
+import           Control.Monad                    (when)
 import           Control.Monad.Primitive          (PrimMonad (..))
+import           Data.Graph.Dynamic.Internal.Tree (Edge (..), edgeSize)
 import qualified Data.Graph.Dynamic.Internal.Tree as Class
-import           Data.List.NonEmpty               (NonEmpty)
-import qualified Data.List.NonEmpty               as NonEmpty
-import           Data.Monoid                      ((<>))
 import           Data.Primitive.MutVar            (MutVar)
 import qualified Data.Primitive.MutVar            as MutVar
 import qualified Data.Tree                        as Tree
@@ -37,14 +35,13 @@ import           System.IO.Unsafe                 (unsafePerformIO)
 import qualified System.Random.MWC                as MWC
 import           Unsafe.Coerce                    (unsafeCoerce)
 
-data T s a v = T
-    { tParent :: {-# UNPACK #-} !(Tree s a v)
-    , tLeft   :: {-# UNPACK #-} !(Tree s a v)
-    , tRight  :: {-# UNPACK #-} !(Tree s a v)
-    , tRandom :: !Int
-    , tLabel  :: !a
-    , tValue  :: !v
-    , tAgg    :: !v
+data T s = T
+    { tParent :: {-# UNPACK #-} !(Tree s)
+    , tLeft   :: {-# UNPACK #-} !(Tree s)
+    , tRight  :: {-# UNPACK #-} !(Tree s)
+    , tRandom :: {-# UNPACK #-} !Int
+    , tEdge   :: {-# UNPACK #-} !Edge
+    , tAgg    :: {-# UNPACK #-} !Int
     }
 
 -- | NOTE (jaspervdj): There are two ways of indicating the parent / left /
@@ -61,37 +58,37 @@ data T s a v = T
 -- is less likely to end up in infinite loops that way, and additionally, we can
 -- move easily move e.g. x's left child to y's right child, even it is an empty
 -- child.
-nil :: Tree s a v
+nil :: Tree s
 nil = unsafeCoerce $ unsafePerformIO $ Tree <$> MutVar.newMutVar undefined
 {-# NOINLINE nil #-}
 
-newtype Tree s a v = Tree (MutVar s (T s a v)) deriving (Eq)
+newtype Tree s = Tree (MutVar s (T s)) deriving (Eq)
 
 singleton
     :: PrimMonad m
-    => MWC.Gen (PrimState m) -> a -> v -> m (Tree (PrimState m) a v)
-singleton gen tLabel tValue = do
+    => MWC.Gen (PrimState m) -> Edge -> m (Tree (PrimState m))
+singleton gen edge = do
     random <- MWC.uniform gen
-    Tree <$> MutVar.newMutVar (T nil nil nil random tLabel tValue tValue)
+    Tree <$> MutVar.newMutVar (T nil nil nil random edge (edgeSize edge))
 
-root :: PrimMonad m => Tree (PrimState m) a v -> m (Tree (PrimState m) a v)
+root :: PrimMonad m => Tree (PrimState m) -> m (Tree (PrimState m))
 root (Tree tv) = do
     T {..} <- MutVar.readMutVar tv
     if tParent == nil then return (Tree tv) else root tParent
 
 -- | Appends two trees.  Returns the root of the tree.
 append
-    :: (PrimMonad m, Monoid v)
-    => Tree (PrimState m) a v
-    -> Tree (PrimState m) a v
-    -> m (Tree (PrimState m) a v)
+    :: (PrimMonad m)
+    => Tree (PrimState m)
+    -> Tree (PrimState m)
+    -> m (Tree (PrimState m))
 append = merge
 
 merge
-    :: (PrimMonad m, Monoid v)
-    => Tree (PrimState m) a v
-    -> Tree (PrimState m) a v
-    -> m (Tree (PrimState m) a v)
+    :: (PrimMonad m)
+    => Tree (PrimState m)
+    -> Tree (PrimState m)
+    -> m (Tree (PrimState m))
 merge xt@(Tree xv) yt@(Tree yv)
     | xt == nil = return yt
     | yt == nil = return xt
@@ -100,19 +97,19 @@ merge xt@(Tree xv) yt@(Tree yv)
         y <- MutVar.readMutVar yv
         if tRandom x < tRandom y then do
             rt@(Tree rv) <- merge xt (tLeft y)
-            MutVar.writeMutVar yv $! y {tLeft = rt, tAgg = tAgg x <> tAgg y}
+            MutVar.writeMutVar yv $! y {tLeft = rt, tAgg = tAgg x + tAgg y}
             MutVar.modifyMutVar rv $ \r -> r {tParent = yt}
             return yt
         else do
             rt@(Tree rv) <- merge (tRight x) yt
-            MutVar.writeMutVar xv $! x {tRight = rt, tAgg = tAgg x <> tAgg y}
+            MutVar.writeMutVar xv $! x {tRight = rt, tAgg = tAgg x + tAgg y}
             MutVar.modifyMutVar rv $ \r -> r {tParent = xt}
             return xt
 
 split
-    :: (PrimMonad m, Monoid v)
-    => Tree (PrimState m) a v
-    -> m (Maybe (Tree (PrimState m) a v), Maybe (Tree (PrimState m) a v))
+    :: (PrimMonad m)
+    => Tree (PrimState m)
+    -> m (Maybe (Tree (PrimState m)), Maybe (Tree (PrimState m)))
 split xt@(Tree xv) = do
     x <- MutVar.readMutVar xv
     let pv = tParent x
@@ -122,17 +119,17 @@ split xt@(Tree xv) = do
     when (lt /= nil) (removeParent lt)
     when (rt /= nil) (removeParent rt)
     MutVar.writeMutVar xv $!
-        x {tParent = nil, tLeft = nil, tRight = nil, tAgg = tValue x}
+        x {tParent = nil, tLeft = nil, tRight = nil, tAgg = edgeSize (tEdge x)}
 
     mergeUp pv xt lt rt
 
 mergeUp
-    :: (PrimMonad m, Monoid v)
-    => Tree (PrimState m) a v  -- Current node
-    -> Tree (PrimState m) a v  -- Eliminated node
-    -> Tree (PrimState m) a v  -- Left tree accumulator
-    -> Tree (PrimState m) a v  -- Right tree accumulator
-    -> m (Maybe (Tree (PrimState m) a v), Maybe (Tree (PrimState m) a v))
+    :: (PrimMonad m)
+    => Tree (PrimState m)  -- Current node
+    -> Tree (PrimState m)  -- Eliminated node
+    -> Tree (PrimState m)  -- Left tree accumulator
+    -> Tree (PrimState m)  -- Right tree accumulator
+    -> m (Maybe (Tree (PrimState m)), Maybe (Tree (PrimState m)))
 mergeUp xt _ lacc racc | xt == nil =
     return
         ( if lacc == nil then Nothing else Just lacc
@@ -144,20 +141,20 @@ mergeUp xt@(Tree xv) ct lacc racc = do
         lt = tLeft x
         rt = tRight x
     if ct == lt then do
-        ra <- if rt == nil then return mempty else aggregate rt
-        MutVar.writeMutVar xv $! x {tParent = nil, tLeft = nil, tAgg = tValue x <> ra}
+        ra <- if rt == nil then return 0 else aggregate rt
+        MutVar.writeMutVar xv $! x {tParent = nil, tLeft = nil, tAgg = edgeSize (tEdge x) + ra}
         racc' <- merge racc xt
         mergeUp pt xt lacc racc'
     else do
-        la <- if lt == nil then return mempty else aggregate lt
-        MutVar.writeMutVar xv $! x {tParent = nil, tRight = nil, tAgg = la <> tValue x}
+        la <- if lt == nil then return 0 else aggregate lt
+        MutVar.writeMutVar xv $! x {tParent = nil, tRight = nil, tAgg = la + edgeSize (tEdge x)}
         lacc' <- merge xt lacc
         mergeUp pt xt lacc' racc
 
 connected
-    :: (PrimMonad m, Monoid v)
-    => Tree (PrimState m) a v
-    -> Tree (PrimState m) a v
+    :: (PrimMonad m)
+    => Tree (PrimState m)
+    -> Tree (PrimState m)
     -> m Bool
 connected xv yv = do
     xr <- root xv
@@ -165,50 +162,50 @@ connected xv yv = do
     return $ xr == yr
 
 aggregate
-    :: (PrimMonad m, Monoid v)
-    => Tree (PrimState m) a v
-    -> m v
+    :: (PrimMonad m)
+    => Tree (PrimState m)
+    -> m Int
 aggregate (Tree xv) = tAgg <$> MutVar.readMutVar xv
 
 -- | For debugging/testing.
 toList
-    :: PrimMonad m => Tree (PrimState m) a v -> m [a]
+    :: PrimMonad m => Tree (PrimState m) -> m [Edge]
 toList = go []
   where
     go acc0 (Tree mv) = do
         T {..} <- MutVar.readMutVar mv
         acc1 <- if tRight == nil then return acc0 else go acc0 tRight
-        let acc2 = tLabel : acc1
+        let acc2 = tEdge : acc1
         if tLeft == nil then return acc2 else go acc2 tLeft
 
 removeParent, _removeLeft, _removeRight
     :: PrimMonad m
-    => Tree (PrimState m) a v -- Parent
+    => Tree (PrimState m)  -- Parent
     -> m ()
 removeParent (Tree xv) = MutVar.modifyMutVar' xv $ \x -> x {tParent = nil}
 _removeLeft  (Tree xv) = MutVar.modifyMutVar' xv $ \x -> x {tLeft = nil}
 _removeRight (Tree xv) = MutVar.modifyMutVar' xv $ \x -> x {tRight = nil}
 
 -- | For debugging/testing.
-freeze :: PrimMonad m => Tree (PrimState m) a v -> m (Tree.Tree a)
+freeze :: PrimMonad m => Tree (PrimState m) -> m (Tree.Tree Edge)
 freeze (Tree mv) = do
     T {..} <- MutVar.readMutVar mv
     children  <- sequence $
         [freeze tLeft | tLeft /= nil] ++
         [freeze tRight | tRight /= nil]
-    return $ Tree.Node tLabel children
+    return $ Tree.Node tEdge children
 
-print :: Show a => Tree (PrimState IO) a v -> IO ()
+print :: Tree (PrimState IO) -> IO ()
 print = go 0
   where
     go d (Tree mv) = do
         T {..} <- MutVar.readMutVar mv
         when (tLeft /= nil) $ go (d + 1) tLeft
-        putStrLn $ replicate d ' ' ++ show tLabel
+        putStrLn $ replicate d ' ' ++ show tEdge
         when (tRight /= nil) $ go (d + 1) tRight
 
 assertInvariants
-    :: (PrimMonad m, Monoid v, Eq v, Show v) => Tree (PrimState m) a v -> m ()
+    :: (PrimMonad m) => Tree (PrimState m) -> m ()
 assertInvariants t = do
     _ <- computeAgg nil t
     return ()
@@ -221,10 +218,10 @@ assertInvariants t = do
 
         let lt = tLeft x
         let rt = tRight x
-        la <- if lt == nil then return mempty else computeAgg xt lt
-        ra <- if rt == nil then return mempty else computeAgg xt rt
+        la <- if lt == nil then return 0 else computeAgg xt lt
+        ra <- if rt == nil then return 0 else computeAgg xt rt
 
-        let actualAgg = la <> (tValue x) <> ra
+        let actualAgg = la + (edgeSize (tEdge x)) + ra
         let storedAgg = tAgg x
 
         when (actualAgg /= storedAgg) $ fail $
@@ -233,13 +230,13 @@ assertInvariants t = do
 
         return actualAgg
 
-assertSingleton :: PrimMonad m => Tree (PrimState m) a v -> m ()
+assertSingleton :: PrimMonad m => Tree (PrimState m) -> m ()
 assertSingleton (Tree xv) = do
     T {..} <- MutVar.readMutVar xv
     when (tLeft /= nil || tRight /= nil || tParent /= nil) $
         fail "not a singleton"
 
-assertRoot :: PrimMonad m => Tree (PrimState m) a v -> m ()
+assertRoot :: PrimMonad m => Tree (PrimState m) -> m ()
 assertRoot (Tree xv) = do
     T {..} <- MutVar.readMutVar xv
     when (tParent /= nil) $ fail "not the root"
