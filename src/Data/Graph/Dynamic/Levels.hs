@@ -85,47 +85,36 @@ fromVertices
     :: (Eq v, Hashable v, Tree t, PrimMonad m, s ~ PrimState m) => [v] -> m (Graph t s v)
 fromVertices xs = do
   unLevels <- VM.new 0
-  let allEdges = HMS.fromList $ zip xs $ repeat HS.empty
+  let allEdges = HMS.empty
       numEdges = 0
-  Graph <$> newMutVar L {..}
+  g <- Graph <$> newMutVar L {..}
+  mapM_ (insertVertex g) xs
+  return g
 
 fromVertices'
     :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => [v] -> m (Graph' s v)
 fromVertices' = fromVertices
 
 -- TODO (jaspervdj): Kill Ord constraints in this module
-insertEdge :: (Eq v, Hashable v, Tree t, PrimMonad m, s ~ PrimState m) => Graph t s v -> v -> v -> m ()
-insertEdge (Graph levels) a b = do --traceShow (numEdges, VM.length unLevels, HS.member (a, b) allEdges) $
+insertEdge :: (Eq v, Hashable v, Tree t, PrimMonad m, s ~ PrimState m) => Graph t s v -> v -> v -> m Bool
+insertEdge (Graph levels) a b = do
   L {..} <- readMutVar levels
   let !newAllEdges = linkEdgeSet a b allEdges
       !newNumEdges = numEdges + 1
 
-  if memberEdgeSet a b allEdges || a == b
-    then return ()
+  if memberEdgeSet a b allEdges || a == b || VM.null unLevels
+    then return False
     else do
-      unLevels' <- do
-        let oldNumLevels = VM.length unLevels
-        newUnLevels <- VM.take (logBase2 newNumEdges + 1) <$>
-          VM.grow unLevels (max 0 $ logBase2 newNumEdges - oldNumLevels + 1)
-        forM_ [oldNumLevels .. logBase2 newNumEdges] $ \levelIdx -> do
-          df <- ET.discreteForest (\v1 v2 -> if v1 == v2 then Sum 1 else Sum 0) $ map fst $ HMS.toList allEdges
-          VM.write newUnLevels levelIdx (df, HMS.empty)
-        return newUnLevels
-      -- traceShowM (VM.null levels')
-      if VM.null unLevels'
-        then return ()
-        else do
-          (thisEtf, thisNonTreeEdges) <- VM.read unLevels' 0
-          isTreeEdge <- ET.insertEdge thisEtf a b
-          -- traceShowM $ (newNumEdges, m'newEtf)
-          -- traceShowM $ (newNumEdges, "test3")
-          let !thisNonTreeEdges'
-                | isTreeEdge = thisNonTreeEdges
-                | otherwise  = linkEdgeSet a b thisNonTreeEdges
+      (thisEtf, thisNonTreeEdges) <- VM.read unLevels 0
+      isTreeEdge <- ET.insertEdge thisEtf a b
+      let !thisNonTreeEdges'
+            | isTreeEdge = thisNonTreeEdges
+            | otherwise  = linkEdgeSet a b thisNonTreeEdges
 
-          VM.write unLevels' 0 (thisEtf, thisNonTreeEdges')
-          writeMutVar levels $ L
-              {allEdges = newAllEdges, unLevels = unLevels',numEdges = newNumEdges}
+      VM.write unLevels 0 (thisEtf, thisNonTreeEdges')
+      writeMutVar levels $ L
+          {allEdges = newAllEdges, unLevels = unLevels, numEdges = newNumEdges}
+      return True
 
 connected :: (Eq v, Hashable v, Tree t, PrimMonad m, s ~ PrimState m) => Graph t s v -> v -> v -> m (Maybe Bool)
 connected _ a b | a == b = return (Just True)
@@ -235,16 +224,25 @@ insertVertex
 insertVertex (Graph g) x = do
     l@L {..} <- readMutVar g
     let newAllEdges   = HMS.insertWith HS.union x HS.empty allEdges
-        updateLevel i
-            | i >= VM.length unLevels = return ()
+    let numVertices = HMS.size newAllEdges
+    unLevels' <- do
+      let oldNumLevels = VM.length unLevels
+      newUnLevels <- VM.take (logBase2 numVertices + 1) <$>
+        VM.grow unLevels (max 0 $ logBase2 numVertices - oldNumLevels + 1)
+      forM_ [oldNumLevels .. logBase2 numVertices] $ \levelIdx -> do
+        df <- ET.discreteForest (\v1 v2 -> if v1 == v2 then Sum 1 else Sum 0) $ map fst $ HMS.toList allEdges
+        VM.write newUnLevels levelIdx (df, HMS.empty)
+      return newUnLevels
+    let updateLevel i
+            | i >= VM.length unLevels' = return ()
             | otherwise               = do
-                (forest, nt) <- VM.read unLevels i
+                (forest, nt) <- VM.read unLevels' i
                 ET.insertVertex forest x
-                VM.write unLevels i (forest, nt)
+                VM.write unLevels' i (forest, nt)
                 updateLevel (i + 1)
 
     updateLevel 0
-    writeMutVar g $ l {allEdges = newAllEdges}
+    writeMutVar g $ l {allEdges = newAllEdges, unLevels = unLevels'}
 
 deleteVertex
     :: (Eq v, Hashable v, Tree t, PrimMonad m) => Graph t (PrimState m) v -> v -> m ()
