@@ -20,6 +20,7 @@ import Test.Framework.Providers.QuickCheck2
 import Test.QuickCheck
 
 import qualified Data.Graph.Dynamic.EulerTour as ET
+import Data.Graph.Dynamic.Internal.Tree (Tree)
 
 import Action
 import Graph
@@ -51,8 +52,8 @@ runSlowForestAction sf@Graph {..} (Query x y) = (sf, Just (Set.member y' $ compo
     x' = mod x numNodes
     y' = mod y numNodes
 
-runForestAction :: (Monoid a) =>
-  Int -> ET.Forest a s Int -> [Bool] -> Action t -> ST s [Bool]
+runForestAction :: (Monoid a, Tree tree) =>
+  Int -> ET.Forest tree a s Int -> [Bool] -> Action t -> ST s [Bool]
 runForestAction n etf xs (Cut x y) = ET.deleteEdge etf x' y' >> return xs
   where
     x' = mod x n
@@ -81,7 +82,7 @@ checkActions (Positive n) actions = slowResult === result
     slowResult = catMaybes $ snd $ mapAccumL runSlowForestAction initialGraph actions
     result :: [Bool]
     result = runST $ do
-      initialForest <- ET.discreteForest (\_ _ -> ()) [0..n-1]
+      initialForest <- ET.discreteForest' (\_ _ -> ()) [0..n-1]
       results <- foldM (runForestAction n initialForest) [] actions
       return $ reverse results
 

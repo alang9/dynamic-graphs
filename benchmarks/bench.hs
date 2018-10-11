@@ -1,10 +1,12 @@
 {-# LANGUAGE BangPatterns #-}
-import Criterion.Main
+import           Criterion.Main
 
-import qualified Data.Graph.Dynamic.Levels as Levels
-import qualified Data.Graph.Dynamic.EulerTour as ETF
+import           Control.Monad.Primitive            (RealWorld)
+import qualified Data.Graph.Dynamic.EulerTour       as ETF
+import qualified Data.Graph.Dynamic.Internal.Random as Random
+import qualified Data.Graph.Dynamic.Levels          as Levels
 
-import Debug.Trace
+import           Debug.Trace
 
 main :: IO ()
 main = defaultMainWith defaultConfig
@@ -18,6 +20,7 @@ main = defaultMainWith defaultConfig
 completeGraph :: Int -> IO [(Maybe Bool, Maybe Bool)]
 completeGraph n = do
   levels <- Levels.fromVertices [0..n-1]
+    :: IO (Levels.Graph Random.Tree RealWorld Int)
   mapM_ (\(x, y) -> Levels.insertEdge levels x y) edges
   mapM (\(x, y) -> do
            c1 <- Levels.connected levels x y
@@ -31,6 +34,7 @@ completeGraph n = do
 completeBinaryTree :: Int -> IO [(Maybe Bool, Maybe Bool)]
 completeBinaryTree n = do
   etf <- ETF.discreteForest (\_ _ -> ()) [0..n-1]
+    :: IO (ETF.Graph Random.Tree RealWorld Int)
   mapM_ (\(x, y) -> ETF.insertEdge etf x y) edges
   mapM (\(x, y) -> do
            c1 <- ETF.connected etf x y

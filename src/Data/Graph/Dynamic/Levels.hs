@@ -13,10 +13,13 @@
 module Data.Graph.Dynamic.Levels
     ( -- * Type
       Graph
+    , Graph'
 
       -- * Construction
     , new
+    , new'
     , fromVertices
+    , fromVertices'
 
       -- * Queries
     , connected
@@ -32,17 +35,19 @@ module Data.Graph.Dynamic.Levels
 import           Control.Monad
 import           Control.Monad.Primitive
 import           Data.Bits
-import           Data.Hashable                     (Hashable)
-import qualified Data.HashMap.Strict               as HMS
-import qualified Data.HashSet                      as HS
-import qualified Data.List                         as L
-import           Data.Maybe                        (fromMaybe)
+import           Data.Hashable                      (Hashable)
+import qualified Data.HashMap.Strict                as HMS
+import qualified Data.HashSet                       as HS
+import qualified Data.List                          as L
+import           Data.Maybe                         (fromMaybe)
 import           Data.Monoid
 import           Data.Primitive.MutVar
-import qualified Data.Vector.Mutable               as VM
+import qualified Data.Vector.Mutable                as VM
 
-import qualified Data.Graph.Dynamic.EulerTour      as ET
-import qualified Data.Graph.Dynamic.Internal.Splay as Splay
+import qualified Data.Graph.Dynamic.EulerTour       as ET
+import qualified Data.Graph.Dynamic.Internal.Random as Random
+import           Data.Graph.Dynamic.Internal.Tree   (Tree)
+import qualified Data.Graph.Dynamic.Internal.Tree   as Tree
 
 type EdgeSet v = HMS.HashMap v (HS.HashSet v)
 
@@ -57,30 +62,39 @@ cutEdgeSet x y = HMS.adjust (HS.delete x) y . HMS.adjust (HS.delete y) x
 memberEdgeSet :: (Eq v, Hashable v) => v -> v -> EdgeSet v -> Bool
 memberEdgeSet x y = maybe False (y `HS.member`) . HMS.lookup x
 
-data L s v = L
+data L t s v = L
   { numEdges :: !Int
   , allEdges :: !(EdgeSet v)
-  , unLevels :: !(VM.MVector s (ET.Forest (Sum Int) s v, EdgeSet v))
+  , unLevels :: !(VM.MVector s (ET.Forest t (Sum Int) s v, EdgeSet v))
   }
 
-newtype Graph s v = Graph (MutVar s (L s v))
+newtype Graph t s v = Graph (MutVar s (L t s v))
+
+type Graph' s v = Graph Random.Tree s v
 
 logBase2 :: Int -> Int
 logBase2 x = finiteBitSize x - 1 - countLeadingZeros x
 
-new :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => m (Graph s v)
+new :: (Eq v, Hashable v, Tree t, PrimMonad m, s ~ PrimState m) => m (Graph t s v)
 new = fromVertices []
 
+new' :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => m (Graph' s v)
+new' = new
+
 fromVertices
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => [v] -> m (Graph s v)
+    :: (Eq v, Hashable v, Tree t, PrimMonad m, s ~ PrimState m) => [v] -> m (Graph t s v)
 fromVertices xs = do
   unLevels <- VM.new 0
   let allEdges = HMS.fromList $ zip xs $ repeat HS.empty
       numEdges = 0
   Graph <$> newMutVar L {..}
 
+fromVertices'
+    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => [v] -> m (Graph' s v)
+fromVertices' = fromVertices
+
 -- TODO (jaspervdj): Kill Ord constraints in this module
-insertEdge :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m ()
+insertEdge :: (Eq v, Hashable v, Tree t, PrimMonad m, s ~ PrimState m) => Graph t s v -> v -> v -> m ()
 insertEdge (Graph levels) a b = do --traceShow (numEdges, VM.length unLevels, HS.member (a, b) allEdges) $
   L {..} <- readMutVar levels
   let !newAllEdges = linkEdgeSet a b allEdges
@@ -113,7 +127,7 @@ insertEdge (Graph levels) a b = do --traceShow (numEdges, VM.length unLevels, HS
           writeMutVar levels $ L
               {allEdges = newAllEdges, unLevels = unLevels',numEdges = newNumEdges}
 
-connected :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m (Maybe Bool)
+connected :: (Eq v, Hashable v, Tree t, PrimMonad m, s ~ PrimState m) => Graph t s v -> v -> v -> m (Maybe Bool)
 connected _ a b | a == b = return (Just True)
 connected (Graph levels) a b = do
   L {..} <- readMutVar levels
@@ -123,12 +137,12 @@ connected (Graph levels) a b = do
       (etf, _) <- VM.read unLevels 0
       ET.connected etf a b
 
-hasEdge :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m Bool
+hasEdge :: (Eq v, Hashable v, Tree t, PrimMonad m, s ~ PrimState m) => Graph t s v -> v -> v -> m Bool
 hasEdge (Graph levels) a b = do
   L {..} <- readMutVar levels
   return $ memberEdgeSet a b allEdges
 
-deleteEdge :: forall m s v. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m) => Graph s v -> v -> v -> m ()
+deleteEdge :: forall t m s v. (Eq v, Hashable v, Tree t, PrimMonad m, s ~ PrimState m) => Graph t s v -> v -> v -> m ()
 deleteEdge (Graph levels) a b = do
   L {..} <- readMutVar levels
   let newAllEdges = cutEdgeSet a b allEdges
@@ -140,7 +154,7 @@ deleteEdge (Graph levels) a b = do
       let newNumEdges = if cut then numEdges - 1 else numEdges
       writeMutVar levels L {allEdges = newAllEdges, numEdges = newNumEdges, ..}
   where
-    go :: VM.MVector s (ET.Forest (Sum Int) s v, EdgeSet v) -> Int -> m Bool
+    go :: VM.MVector s (ET.Forest t (Sum Int) s v, EdgeSet v) -> Int -> m Bool
     go unLevels idx = do
       -- traceShowM ("go", idx)
       (etf, nonTreeEdges0) <- VM.read unLevels idx
@@ -157,7 +171,7 @@ deleteEdge (Graph levels) a b = do
           Just sRoot <- ET.findRoot etf smaller
 
           -- These are all edges, and vertices within the smaller tree.
-          sTreeEdges <- Splay.toList sRoot
+          sTreeEdges <- Tree.toList sRoot
           let !sVertices = HS.fromList $ map fst $
                     filter (uncurry (==)) sTreeEdges
 
@@ -205,7 +219,7 @@ deleteEdge (Graph levels) a b = do
             Just rep@(c, d) -> do
               let !nonTreeEdges2 = cutEdgeSet c d nonTreeEdges1
               VM.write unLevels idx (etf, nonTreeEdges2)
-              ET.insertEdge etf c d
+              _ <- ET.insertEdge etf c d
               propagateReplacement unLevels (idx - 1) rep
               return True
 
@@ -217,7 +231,7 @@ deleteEdge (Graph levels) a b = do
       propagateReplacement unLevels (idx - 1) (c, d)
 
 insertVertex
-    :: (Eq v, Hashable v, PrimMonad m) => Graph (PrimState m) v -> v -> m ()
+    :: (Eq v, Hashable v, Tree t, PrimMonad m) => Graph t (PrimState m) v -> v -> m ()
 insertVertex (Graph g) x = do
     l@L {..} <- readMutVar g
     let newAllEdges   = HMS.insertWith HS.union x HS.empty allEdges
@@ -233,7 +247,7 @@ insertVertex (Graph g) x = do
     writeMutVar g $ l {allEdges = newAllEdges}
 
 deleteVertex
-    :: (Eq v, Hashable v, PrimMonad m) => Graph (PrimState m) v -> v -> m ()
+    :: (Eq v, Hashable v, Tree t, PrimMonad m) => Graph t (PrimState m) v -> v -> m ()
 deleteVertex g@(Graph levels) x = do
     l0 <- readMutVar levels
     let neighbours = fromMaybe HS.empty (HMS.lookup x (allEdges l0))

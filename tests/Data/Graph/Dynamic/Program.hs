@@ -1,7 +1,7 @@
-{-# LANGUAGE BangPatterns      #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE MultiWayIf        #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE BangPatterns         #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE MultiWayIf           #-}
+{-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 module Data.Graph.Dynamic.Program
     ( Program
@@ -20,21 +20,22 @@ module Data.Graph.Dynamic.Program
     , decodeInt
     ) where
 
-import           Control.Monad                (void, when)
-import           Control.Monad.Primitive      (PrimMonad (..))
-import qualified Data.Graph.Dynamic.EulerTour as ET
-import qualified Data.Graph.Dynamic.Levels    as Levels
-import qualified Data.Graph.Dynamic.Slow      as Slow
-import           Data.Hashable                (Hashable)
-import qualified Data.HashSet                 as HS
-import           Data.List                    (intersperse, (\\))
-import           Data.Maybe                   (fromMaybe)
-import           Data.Monoid                  ((<>))
-import qualified Data.Text                    as T
-import qualified Data.Text.Lazy               as TL
-import qualified Data.Text.Lazy.Builder       as TLB
-import qualified Test.QuickCheck              as QC
-import           Text.Read                    (readMaybe)
+import           Control.Monad                    (void, when)
+import           Control.Monad.Primitive          (PrimMonad (..))
+import qualified Data.Graph.Dynamic.EulerTour     as ET
+import           Data.Graph.Dynamic.Internal.Tree (Tree)
+import qualified Data.Graph.Dynamic.Levels        as Levels
+import qualified Data.Graph.Dynamic.Slow          as Slow
+import           Data.Hashable                    (Hashable)
+import qualified Data.HashSet                     as HS
+import           Data.List                        (intersperse, (\\))
+import           Data.Maybe                       (fromMaybe)
+import           Data.Monoid                      ((<>))
+import qualified Data.Text                        as T
+import qualified Data.Text.Lazy                   as TL
+import qualified Data.Text.Lazy.Builder           as TLB
+import qualified Test.QuickCheck                  as QC
+import           Text.Read                        (readMaybe)
 
 type Program v = [Instruction v]
 
@@ -130,14 +131,14 @@ class Interpreter f where
         :: (Eq v, Hashable v, PrimMonad m)
         => f (PrimState m) v -> v -> v -> m Bool
 
-instance Interpreter Levels.Graph where
+instance Tree t => Interpreter (Levels.Graph t) where
     insertVertex    = Levels.insertVertex
     insertEdge      = Levels.insertEdge
     deleteVertex    = Levels.deleteVertex
     deleteEdge      = Levels.deleteEdge
     connected f x y = fromMaybe False <$> Levels.connected f x y
 
-instance Interpreter ET.Graph where
+instance Tree t => Interpreter (ET.Graph t) where
     insertVertex     = ET.insertVertex
     insertEdge f x y = void $ ET.insertEdge f x y
     deleteVertex     = ET.deleteVertex

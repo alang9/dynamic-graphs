@@ -1,27 +1,29 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell     #-}
+{-# LANGUAGE TupleSections       #-}
 
 module Data.Graph.Dynamic.EulerTour.Tests where
 
-import Control.Monad (void)
-import Control.Monad.ST
-import Data.Maybe
-import Test.Framework
-import Test.Framework.TH
-import Test.Framework.Providers.QuickCheck2
+import           Control.Monad.ST
+import           Test.Framework
+import           Test.Framework.Providers.QuickCheck2
+import           Test.Framework.TH
 
-import qualified Data.Graph.Dynamic.EulerTour as ET
-import Data.Graph.Dynamic.Program
+import qualified Data.Graph.Dynamic.EulerTour         as ET
+import qualified Data.Graph.Dynamic.Internal.Random   as Random
+import           Data.Graph.Dynamic.Program
 
 prop_program :: IntTreeProgram -> ()
-prop_program (IntTreeProgram p) = runST $ do
-    f <- ET.new (\_ _ -> ())
-    runProgram f p
+prop_program (IntTreeProgram p) = runST go
+  where
+    go :: forall s. ST s ()
+    go = do
+        f <- ET.new (\_ _ -> ()) :: ST s (ET.Graph Random.Tree s Int)
+        runProgram f p
 
 tests :: Test
 tests = $testGroupGenerator

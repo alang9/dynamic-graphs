@@ -2,6 +2,7 @@ import qualified Data.Graph.Dynamic.EulerTour.Tests
 import qualified Data.Graph.Dynamic.EulerTour.Tests2
 import qualified Data.Graph.Dynamic.Internal.BitVector.Tests
 import qualified Data.Graph.Dynamic.Internal.FastAvl.Tests
+import qualified Data.Graph.Dynamic.Internal.Random.Tests
 import qualified Data.Graph.Dynamic.Internal.Splay.Tests
 import qualified Data.Graph.Dynamic.Levels.Tests
 import qualified Data.Graph.Dynamic.Levels.Tests2
@@ -13,6 +14,7 @@ main = defaultMain
     , Data.Graph.Dynamic.EulerTour.Tests2.tests
     , Data.Graph.Dynamic.Internal.BitVector.Tests.tests
     , Data.Graph.Dynamic.Internal.FastAvl.Tests.tests
+    , Data.Graph.Dynamic.Internal.Random.Tests.tests
     , Data.Graph.Dynamic.Internal.Splay.Tests.tests
     , Data.Graph.Dynamic.Levels.Tests.tests
     , Data.Graph.Dynamic.Levels.Tests2.tests

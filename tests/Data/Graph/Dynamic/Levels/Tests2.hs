@@ -21,6 +21,7 @@ import Test.QuickCheck
 
 import Data.Graph.Dynamic.Program
 import qualified Data.Graph.Dynamic.Levels as Levels
+import Data.Graph.Dynamic.Internal.Tree
 
 import Action
 import Graph
@@ -48,8 +49,8 @@ runSlowGraphAction sf@Graph {..} (Query x y) = (sf, Just (Set.member y' $ compon
     x' = mod x numNodes
     y' = mod y numNodes
 
-runGraphAction ::
-  Int -> Levels.Graph s Int -> [Bool] -> Action t -> ST s [Bool]
+runGraphAction :: Tree tree =>
+  Int -> Levels.Graph tree s Int -> [Bool] -> Action t -> ST s [Bool]
 runGraphAction n levels xs (Cut x y) = do
     Levels.deleteEdge levels x' y'
     return xs
@@ -85,7 +86,7 @@ checkActions (Positive n) actions = slowResult === result
     slowResult = catMaybes $ snd $ mapAccumL runSlowGraphAction initialSlowGraph actions
     result :: [Bool]
     result = runST $ do
-      initialGraph <- Levels.fromVertices [0..n-1]
+      initialGraph <- Levels.fromVertices' [0..n-1]
       results <- foldM (runGraphAction n initialGraph) [] actions
       return $ reverse results
 

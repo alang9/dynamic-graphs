@@ -24,16 +24,19 @@ library
     Data.Graph.Dynamic.Internal.Avl
     Data.Graph.Dynamic.Internal.BitVector
     Data.Graph.Dynamic.Internal.Splay
+    Data.Graph.Dynamic.Internal.Random
+    Data.Graph.Dynamic.Internal.Tree
     Data.Graph.Dynamic.Internal.FastAvl
     Data.Graph.Dynamic.Internal.HashTable
 
   build-depends:
     base >=4.10 && <4.13,
-    primitive,
     containers,
-    unordered-containers,
-    hashtables,
     hashable,
+    hashtables,
+    mwc-random,
+    primitive,
+    unordered-containers,
     vector
 
 
@@ -53,6 +56,8 @@ test-suite dynamic-connectivity-tests
     Data.Graph.Dynamic.Internal.BitVector.Tests
     Data.Graph.Dynamic.Internal.FastAvl.Tests
     Data.Graph.Dynamic.Internal.Splay.Tests
+    Data.Graph.Dynamic.Internal.Random.Tests
+    Data.Graph.Dynamic.Internal.Tree.Tests
     Data.Graph.Dynamic.Levels.Tests
     Data.Graph.Dynamic.Levels.Tests2
 
@@ -65,6 +70,7 @@ test-suite dynamic-connectivity-tests
     dynamic-connectivity,
     bytestring,
     containers,
+    mwc-random,
     hashable,
     unordered-containers,
     primitive,
@@ -82,6 +88,7 @@ benchmark dynamic-connectivity-benchmarks
   ghc-options: -Wall -O2 -threaded -rtsopts
   build-depends:
     dynamic-connectivity,
+    primitive,
     base,
     criterion
 
@@ -92,8 +99,9 @@ executable foo
   ghc-options: -Wall -O2 -threaded -rtsopts
   build-depends:
     dynamic-connectivity,
-                base,
-                deepseq
+    base,
+    deepseq,
+    primitive
 
 executable bench-program
   main-is: bench-program.hs

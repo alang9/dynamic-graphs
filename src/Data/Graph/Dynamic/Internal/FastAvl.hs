@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiWayIf       #-}
 {-# LANGUAGE RecordWildCards  #-}
+{-# LANGUAGE TypeFamilies     #-}
 module Data.Graph.Dynamic.Internal.FastAvl
     ( Tree
 
@@ -23,15 +24,16 @@ module Data.Graph.Dynamic.Internal.FastAvl
     , assertRoot
     ) where
 
-import           Control.Monad           (foldM, when)
-import           Control.Monad.Primitive (PrimMonad (..))
-import           Data.List.NonEmpty      (NonEmpty)
-import qualified Data.List.NonEmpty      as NonEmpty
-import           Data.Monoid             ((<>))
-import           Data.Primitive.MutVar   (MutVar)
-import qualified Data.Primitive.MutVar   as MutVar
-import qualified Data.Tree               as Tree
-import           Prelude                 hiding (concat, print)
+import           Control.Monad                    (foldM, when)
+import           Control.Monad.Primitive          (PrimMonad (..))
+import qualified Data.Graph.Dynamic.Internal.Tree as Class
+import           Data.List.NonEmpty               (NonEmpty)
+import qualified Data.List.NonEmpty               as NonEmpty
+import           Data.Monoid                      ((<>))
+import           Data.Primitive.MutVar            (MutVar)
+import qualified Data.Primitive.MutVar            as MutVar
+import qualified Data.Tree                        as Tree
+import           Prelude                          hiding (concat, print)
 
 data Tree s a v = Tree
     { tParent :: {-# UNPACK #-} !(MutVar s (Tree s a v))
@@ -485,3 +487,23 @@ assertRoot :: PrimMonad m => Tree (PrimState m) a v -> m ()
 assertRoot x = do
     p <- MutVar.readMutVar (tParent x)
     when (p /= x) $ fail "not the root"
+
+data TreeGen s = TreeGen
+
+instance Class.Tree Tree where
+    type TreeGen Tree = TreeGen
+    newTreeGen _ = return TreeGen
+
+    singleton _ = singleton
+    append      = append
+    split       = split
+    connected   = connected
+    root        = root
+    aggregate   = aggregate
+    toList      = toList
+
+instance Class.TestTree Tree where
+    print            = print
+    assertInvariants = assertInvariants
+    assertSingleton  = assertSingleton
+    assertRoot       = assertRoot
