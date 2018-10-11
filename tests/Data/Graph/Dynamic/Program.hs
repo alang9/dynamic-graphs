@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns         #-}
+{-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE MultiWayIf           #-}
 {-# LANGUAGE OverloadedStrings    #-}
@@ -20,6 +21,7 @@ module Data.Graph.Dynamic.Program
     , decodeInt
     ) where
 
+import Control.DeepSeq
 import           Control.Monad                    (void, when)
 import           Control.Monad.Primitive          (PrimMonad (..))
 import qualified Data.Graph.Dynamic.EulerTour     as ET
@@ -34,6 +36,7 @@ import           Data.Monoid                      ((<>))
 import qualified Data.Text                        as T
 import qualified Data.Text.Lazy                   as TL
 import qualified Data.Text.Lazy.Builder           as TLB
+import GHC.Generics
 import qualified Test.QuickCheck                  as QC
 import           Text.Read                        (readMaybe)
 
@@ -45,7 +48,9 @@ data Instruction v
     | DeleteVertex v
     | DeleteEdge v v
     | Connected v v Bool
-    deriving (Show)
+    deriving (Show, Generic)
+
+instance (NFData v) => NFData (Instruction v)
 
 genProgram
     :: (Eq v, Hashable v)
@@ -133,7 +138,7 @@ class Interpreter f where
 
 instance Tree t => Interpreter (Levels.Graph t) where
     insertVertex    = Levels.insertVertex
-    insertEdge      = Levels.insertEdge
+    insertEdge f x y = void $ Levels.insertEdge f x y
     deleteVertex    = Levels.deleteVertex
     deleteEdge      = Levels.deleteEdge
     connected f x y = fromMaybe False <$> Levels.connected f x y

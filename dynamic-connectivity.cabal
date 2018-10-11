@@ -67,6 +67,7 @@ test-suite dynamic-connectivity-tests
   build-depends:
     aeson,
     base,
+    deepseq,
     dynamic-connectivity,
     bytestring,
     containers,
@@ -111,6 +112,7 @@ executable bench-program
 
   build-depends:
     base,
+    deepseq,
     criterion,
     dynamic-connectivity,
     hashable,
@@ -131,6 +133,7 @@ executable gen-program
 
   build-depends:
     base,
+    deepseq,
     dynamic-connectivity,
     hashable,
     primitive,
