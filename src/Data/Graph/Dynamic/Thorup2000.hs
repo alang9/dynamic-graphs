@@ -6,6 +6,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeOperators #-}
 
 module Data.Graph.Dynamic.Thorup2000 where
@@ -16,7 +17,8 @@ import           Data.Bits
 import qualified Data.HashMap.Strict               as HMS
 import Data.Hashable (Hashable)
 import Data.Map as Map
-import           Data.Primitive.MutVar
+import Data.Monoid
+import Data.Primitive.MutVar
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Type.Equality
@@ -28,7 +30,7 @@ import qualified Data.Graph.Dynamic.Internal.Splay as Splay
 
 data Graph s v = Graph
   { numEdges :: !(MutVar s Int)
-  , allEdges :: !(MutVar s (HMS.HashMap v (HMS.HashMap v Level)))
+  , allEdges :: !(MutVar s (HMS.HashMap (v, v) (EdgeType, Level)))
   , allVertices :: !(MutVar s (Map v (StructuralTree 'True 'False 'False 'False 'False s v)))
   }
 
@@ -62,7 +64,7 @@ data ST (nt0 :: Bool) (nt1 :: Bool) (nt2 :: Bool) (nt3 :: Bool) (nt4 :: Bool) s 
     , lsNonTreeEdges :: Int
     , lsCount :: !Int
     }
-    -> ST nt1 nt2 'True nt3 b4 s v
+    -> ST 'False 'False 'True 'False 'False s v
   LRNode ::
     { lrnParent :: StructuralTree 'False 'False nt0 nt1 'False s v
     , lrnLeft :: StructuralTree 'False 'False 'False nt4 a4 s v
@@ -79,7 +81,7 @@ data ST (nt0 :: Bool) (nt1 :: Bool) (nt2 :: Bool) (nt3 :: Bool) (nt4 :: Bool) s 
     , lrlNonTreeEdges :: !Int
     , lrlCount :: !Int
     }
-    -> ST b0 b1 b2 b3 'True s v
+    -> ST 'False 'False b2 b3 'True s v
 
 type StructuralTree b0 b1 b2 b3 b4 s v = MutVar s (ST b0 b1 b2 b3 b4 s v)
 
@@ -118,6 +120,7 @@ insertVertex Graph {..} v = do
     Nothing -> do
       newSTree <- singletonST v
       writeMutVar allVertices $ Map.insert v newSTree vs
+      modifyMutVar' numEdges succ
     Just _ -> return ()
 
 connected ::
@@ -247,6 +250,71 @@ mergeST ast bst = do
   newLS <- mergeLS (children ast') (children bst')
   modifyMutVar' ast $ \ast' -> ast' {children = newLS}
   modifyMutVar' newLS $ \LSNode {..} -> LSNode {lsPrev = ast, ..}
+  deleteNode bst
+
+deleteNode ::
+  (PrimState m ~ s, PrimMonad m) => StructuralTree 'False 'True 'False 'False 'False s v -> m ()
+deleteNode node = do
+  readMutVar node >>= \SNode {..} -> case eq nParent node of
+      Just Refl -> return ()
+      Nothing ->
+        readMutVar nParent >>= \LRLeaf {} -> do
+          (m'ls1, oldLs) <- deleteLR Nothing nParent
+          (m'ls2, parentS) <- deleteLS oldLs
+          undefined
+
+deleteLR ::
+  (PrimState m ~ s, PrimMonad m) =>
+  Maybe (StructuralTree 'False 'False 'True 'False 'False s v) -> StructuralTree 'False 'False a2 a3 a4 s v ->
+  m (Maybe (StructuralTree 'False 'False 'True 'False 'False s v), StructuralTree 'False 'False 'True 'False 'False s v)
+deleteLR acc node = do
+  readMutVar node >>= \case
+    LRLeaf {lrlParent} -> readMutVar lrlParent >>= \case
+      LSNode {} -> return (acc, lrlParent)
+      LRNode {..} -> case eq lrnLeft node of
+        Just Refl -> do
+            lsNode <- newMutVar undefined
+            (t1, nt1) <- maybe (return (0, 0)) getBitvectors acc
+            c1 <- maybe (return 0) count acc
+            (t2, nt2) <- getBitvectors lrnRight
+            c2 <- count lrnRight
+            writeMutVar lsNode $ LSNode lsNode lrnRight (maybe lsNode id acc) (t1 .|. t2) (nt1 .|. nt2) (c1 + c2)
+            modifyMutVar lrnRight $ \case
+              LRLeaf{..} -> LRLeaf {lrlParent=lsNode, ..}
+              LRNode{..} -> LRNode {lrnParent=lsNode, ..}
+            deleteLR (Just lsNode) lrlParent
+        Nothing -> case eq lrnRight node of
+          Just Refl -> do
+            lsNode <- newMutVar undefined
+            (t1, nt1) <- maybe (return (0, 0)) getBitvectors acc
+            c1 <- maybe (return 0) count acc
+            (t2, nt2) <- getBitvectors lrnRight
+            c2 <- count lrnLeft
+            writeMutVar lsNode $ LSNode lsNode lrnLeft (maybe lsNode id acc) (t1 .|. t2) (nt1 .|. nt2) (c1 + c2)
+            modifyMutVar lrnLeft $ \case
+              LRLeaf{..} -> LRLeaf {lrlParent=lsNode, ..}
+              LRNode{..} -> LRNode {lrnParent=lsNode, ..}
+            deleteLR (Just lsNode) lrlParent
+          Nothing -> error "impossible"
+    LRNode {} -> undefined
+
+deleteLS ::
+  (PrimState m ~ s, PrimMonad m) =>
+  StructuralTree 'False 'False 'True 'False 'False s v -> m (Maybe (StructuralTree 'False 'False 'True 'False 'False s v), StructuralTree 'False 'True 'False 'False 'False s v)
+deleteLS node = readMutVar node >>= \LSNode {..} ->
+  if lsNext == node
+    then readMutVar lsPrev >>= \case
+      prev'@LSNode {} -> do
+        writeMutVar lsPrev prev' {lsNext = lsPrev}
+        (,) (Just lsPrev) <$> getParentSNode lsPrev
+      SNode {..} -> return (Nothing, lsPrev)
+    else do
+      modifyMutVar' lsNext $ \LSNode {..} -> LSNode {lsPrev = lsPrev, ..}
+      readMutVar lsPrev >>= \case
+        prev'@LSNode {} -> do
+          writeMutVar lsPrev prev' {lsNext = lsNext}
+          (,) (Just lsPrev) <$> getParentSNode lsPrev
+        SNode {..} -> return (Just lsNext, lsPrev)
 
 mergeLS ::
   (PrimState m ~ s, PrimMonad m) =>
@@ -353,14 +421,9 @@ mergeLR alr blr = do
 insertEdge :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => Graph s v -> v -> v -> m ()
 insertEdge g@Graph {..} a b = do
   ae <- readMutVar allEdges
-  let alreadyPresent = case HMS.lookup a ae of
-        Nothing -> False
-        Just ae' -> case HMS.lookup b ae' of
-          Nothing -> False
-          Just _ -> True
-  if alreadyPresent
-    then return ()
-    else do
+  case HMS.lookup (a, b) ae of
+    Just _ -> return ()
+    Nothing -> do
       av <- readMutVar allVertices
       conn <- connected g a b
       case conn of
@@ -374,7 +437,7 @@ insertEdge g@Graph {..} a b = do
           writeMutVar bst $! bst' {groups = Map.insertWith Set.union (NonTreeEdge, 0) (Set.singleton a) (groups bst'), lNonTreeEdges = setBit (lNonTreeEdges bst') 0}
           case ast' of SLeaf {lParent} -> propagate lParent
           case bst' of SLeaf {lParent} -> propagate lParent
-          writeMutVar allEdges $ HMS.insertWith HMS.union a (HMS.singleton b 0) $ HMS.insertWith HMS.union b (HMS.singleton a 0) ae
+          writeMutVar allEdges $ HMS.insert (a, b) (NonTreeEdge, 0) $ HMS.insert (b, a) (NonTreeEdge, 0) ae
           modifyMutVar numEdges succ
         Just False -> do
           let Just ast = Map.lookup a av
@@ -388,5 +451,111 @@ insertEdge g@Graph {..} a b = do
           mergeST aRoot bRoot
           readMutVar ast >>= \case SLeaf {lParent} -> propagate lParent
           readMutVar bst >>= \case SLeaf {lParent} -> propagate lParent
-          writeMutVar allEdges $ HMS.insertWith HMS.union a (HMS.singleton b 0) $ HMS.insertWith HMS.union b (HMS.singleton a 0) ae
+          writeMutVar allEdges $ HMS.insert (a, b) (TreeEdge, 0) $ HMS.insert (b, a) (TreeEdge, 0) ae
           modifyMutVar' numEdges succ
+
+-- Go to the highest ancestor with level greater or equal to the given level. Return Nothing if it would be a leaf node or if the input node's level is too low
+goToLevelGEQ ::
+  (PrimState m ~ s, PrimMonad m) =>
+  Level -> StructuralTree a0 a1 False False False s v -> m (Maybe (StructuralTree False True False False False s v))
+goToLevelGEQ l a = do
+  a' <- readMutVar a
+  case a' of
+    SLeaf {lParent} -> getParentSNode lParent >>= goToLevelGEQ l
+    SNode {nParent, level} ->
+      if level < l
+        then return Nothing
+        else getParentSNode nParent >>= goToLevelGEQ l >>= \case
+          Nothing -> return $ Just a
+          Just b -> return $ Just b
+
+getLevel ::
+  (PrimState m ~ s, PrimMonad m) =>
+  Level -> StructuralTree a0 a1 False False False s v -> m (StructuralTree False True False False False s v)
+getLevel = undefined
+
+sizeWithout ::
+  forall m s v. (PrimMonad m, s ~ PrimState m, Ord v) =>
+  Graph s v -> Level -> v -> v -> m (Sum Int, Set (v, v))
+sizeWithout graph@Graph{..} level a b = do
+  av <- readMutVar allVertices
+  let Just bl = Map.lookup b av
+  bSucc <- goToLevelGEQ (level + 1) bl
+  (bNeighbourCounts, bEdges) <- case bSucc of
+    Nothing -> foldSize bl
+    Just bAncestor -> do
+      foldSize bAncestor
+  bSize <-  maybe (return 1) count bSucc
+  return (Sum bSize <> bNeighbourCounts, bEdges)
+  where
+    foldSize :: StructuralTree a0 a1 a2 a3 a4 s v -> m (Sum Int, Set (v, v))
+    foldSize node = do
+      readMutVar node >>= \case
+        SLeaf {lTreeEdges, groups, vertex}
+          | testBit lTreeEdges level -> case Map.lookup (TreeEdge, level) groups of
+              Nothing -> return mempty
+              Just s -> do
+                let neighbours = Set.filter (\v -> (vertex, v) /= (a, b) && (vertex, v) /= (b, a)) s
+                neighbourResults <- mconcat <$> mapM (sizeWithout graph level vertex) (Set.toList neighbours)
+                return $ neighbourResults <> (Sum 0, Set.map (vertex,) neighbours <> Set.map (,vertex) neighbours)
+          | otherwise -> return mempty
+        SNode {nTreeEdges, children}
+          | testBit nTreeEdges level -> foldSize children
+        LSNode {lsTreeEdges, lsNext, lsLocalRankTree}
+          | testBit lsTreeEdges level -> case eq lsNext node of
+              Just _ -> foldSize lsLocalRankTree
+              Nothing -> mappend <$> foldSize lsLocalRankTree <*> foldSize lsNext
+          | otherwise -> return mempty
+        LRNode {lrnTreeEdges, lrnLeft, lrnRight}
+          | testBit lrnTreeEdges level -> mappend <$> foldSize lrnLeft <*> foldSize lrnRight
+          | otherwise -> return mempty
+        LRLeaf {lrlTreeEdges, lrlChild}
+          | testBit lrlTreeEdges level -> foldSize lrlChild
+          | otherwise -> return mempty
+
+deleteEdge :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => Graph s v -> v -> v -> m ()
+deleteEdge graph@Graph {..} a b = do
+  ae <- readMutVar allEdges
+  av <- readMutVar allVertices
+  case HMS.lookup (a, b) ae of
+    Nothing -> return ()
+    Just (NonTreeEdge, level) -> do
+      let Just al = Map.lookup a av
+      let Just bl = Map.lookup b av
+      modifyMutVar' al $ \al' -> al' {groups = Map.adjust (Set.delete b) (NonTreeEdge, level) $ groups al'}
+      modifyMutVar' bl $ \bl' -> bl' {groups = Map.adjust (Set.delete a) (NonTreeEdge, level) $ groups bl'}
+    Just (TreeEdge, level) -> do
+      (Sum bSize, bEdges) <- sizeWithout graph level a b
+      (Sum aSize, aEdges) <- sizeWithout graph level b a
+      if aSize <= bSize
+        then do
+          mapM_ (increaseLevel level) $ Set.toList aEdges
+        else
+          undefined
+  where
+    increaseLevel lvl (v1, v2) = do
+      av <- readMutVar allVertices
+      let Just v1' = Map.lookup v1 av
+      let Just v2' = Map.lookup v2 av
+      modifyMutVar v1' $ \v1'' ->
+        let Just s = Map.lookup (TreeEdge, lvl) (groups v1'') in
+        let s' = Set.delete v2 s in
+        if Set.null s'
+          then v1'' {groups = Map.insertWith Set.union (TreeEdge, lvl + 1) (Set.singleton v2) $
+                      Map.delete (TreeEdge, lvl) (groups v1'')}
+          else v1'' {groups = Map.insertWith Set.union (TreeEdge, lvl + 1) (Set.singleton v2) $
+                      Map.insert (TreeEdge, lvl) s' (groups v1'')}
+      modifyMutVar v2' $ \v2'' ->
+        let Just s = Map.lookup (TreeEdge, lvl) (groups v2'') in
+        let s' = Set.delete v1 s in
+        if Set.null s'
+          then v2'' {groups = Map.insertWith Set.union (TreeEdge, lvl + 1) (Set.singleton v1) $
+                      Map.delete (TreeEdge, lvl) (groups v2'')}
+          else v2'' {groups = Map.insertWith Set.union (TreeEdge, lvl + 1) (Set.singleton v1) $
+                      Map.insert (TreeEdge, lvl) s' (groups v2'')}
+      propagate v1'
+      propagate v2'
+      v1Ancestor <- getLevel (lvl + 1) v1'
+      v2Ancestor <- getLevel (lvl + 1) v2'
+      mergeST v1Ancestor v2Ancestor -- FIXME
+      modifyMutVar' allEdges $ HMS.insert (v1, v2) (TreeEdge, lvl + 1) . HMS.insert (v2, v1) (TreeEdge, lvl + 1)
