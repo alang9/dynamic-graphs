@@ -3,7 +3,6 @@ module Data.Graph.Dynamic.Internal.BitVector.Tests
     ( tests
     ) where
 
-import           Control.Monad.Primitive               (PrimMonad (..))
 import           Control.Monad.ST                      (runST)
 import qualified Data.Graph.Dynamic.Internal.BitVector as BitVector
 import           Test.Framework                        (Test)

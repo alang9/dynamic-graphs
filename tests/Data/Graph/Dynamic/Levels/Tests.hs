@@ -12,7 +12,6 @@ import           Control.Monad.ST
 import qualified Data.Graph.Dynamic.Internal.Random   as Random
 import qualified Data.Graph.Dynamic.Levels            as Levels
 import           Data.Graph.Dynamic.Program
-import           Data.Maybe
 import           Test.Framework
 import           Test.Framework.Providers.QuickCheck2
 import           Test.Framework.TH

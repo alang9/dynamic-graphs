@@ -1,53 +1,50 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE DataKinds       #-}
+{-# LANGUAGE GADTs           #-}
+{-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TupleSections   #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module Data.Graph.Dynamic.Levels.Tests2 where
 
-import Control.Monad
-import Control.Monad.ST
-import Data.List
-import Data.Maybe
-import Data.Primitive.MutVar
-import qualified Data.Set as Set
-import Test.Framework
-import Test.Framework.TH
-import Test.Framework.Providers.QuickCheck2
-import Test.QuickCheck
+import           Control.Monad
+import           Control.Monad.ST
+import           Data.List
+import           Data.Maybe                           (catMaybes)
+import           Test.Framework
+import           Test.Framework.Providers.QuickCheck2
+import           Test.Framework.TH
+import           Test.QuickCheck
 
-import Data.Graph.Dynamic.Program
-import qualified Data.Graph.Dynamic.Levels as Levels
-import Data.Graph.Dynamic.Internal.Tree
+import           Data.Graph.Dynamic.Internal.Tree
+import qualified Data.Graph.Dynamic.Levels            as Levels
 
-import Action
-import Graph
+import           Action
+import qualified Data.Graph.Dynamic.Slow              as Slow
 
-runSlowGraphAction ::
-  Graph -> Action t -> (Graph, Maybe Bool)
-runSlowGraphAction Graph {..} (Cut x y) = (Graph {edges = Set.delete (x', y') (Set.delete (y', x') edges), ..}, Nothing)
+runSlowGraphAction :: Slow.Graph Int -> Action t -> (Slow.Graph Int, Maybe Bool)
+runSlowGraphAction graph (Cut x y) =
+    (Slow.deleteEdge x' y' graph, Nothing)
   where
-    x' = mod x numNodes
-    y' = mod y numNodes
-runSlowGraphAction Graph {..} (Link x y) = (newSf, Nothing)
+    x' = mod x (Slow.numVertices graph)
+    y' = mod y (Slow.numVertices graph)
+runSlowGraphAction graph (Link x y) =
+    (Slow.insertEdge x' y' graph, Nothing)
   where
-    newSf = Graph {edges = Set.insert (x', y') (Set.insert (y', x') edges), ..}
-    x' = mod x numNodes
-    y' = mod y numNodes
-runSlowGraphAction Graph {..} (Toggle x y) = (newSf, Nothing)
+    x' = mod x (Slow.numVertices graph)
+    y' = mod y (Slow.numVertices graph)
+runSlowGraphAction graph (Toggle x y)
+    | Slow.hasEdge x' y' graph = (Slow.deleteEdge x' y' graph, Nothing)
+    | otherwise                = (Slow.insertEdge x' y' graph, Nothing)
   where
-    newSf = if Set.member (x', y') edges
-      then Graph {edges = Set.delete (x', y') (Set.delete (y', x') edges), ..}
-      else Graph {edges = Set.insert (x', y') (Set.insert (y', x') edges), ..}
-    x' = mod x numNodes
-    y' = mod y numNodes
-runSlowGraphAction sf@Graph {..} (Query x y) = (sf, Just (Set.member y' $ component x' sf))
+    x' = mod x (Slow.numVertices graph)
+    y' = mod y (Slow.numVertices graph)
+runSlowGraphAction graph (Query x y) =
+    (graph, Just (Slow.connected x' y' graph))
   where
-    x' = mod x numNodes
-    y' = mod y numNodes
+    x' = mod x (Slow.numVertices graph)
+    y' = mod y (Slow.numVertices graph)
 
 runGraphAction :: Tree tree =>
   Int -> Levels.Graph tree s Int -> [Bool] -> Action t -> ST s [Bool]
@@ -58,7 +55,7 @@ runGraphAction n levels xs (Cut x y) = do
     x' = mod x n
     y' = mod y n
 runGraphAction n levels xs (Link x y) = do
-  Levels.insertEdge levels x' y'
+  _ <- Levels.insertEdge levels x' y'
   return xs
   where
     x' = mod x n
@@ -82,7 +79,7 @@ runGraphAction n levels xs (Query x y) = Levels.connected levels x' y' >>= \case
 checkActions :: Positive Int -> [Action t] -> Property
 checkActions (Positive n) actions = slowResult === result
   where
-    initialSlowGraph = discreteGraph n
+    initialSlowGraph = Slow.fromVertices [0..n-1]
     slowResult = catMaybes $ snd $ mapAccumL runSlowGraphAction initialSlowGraph actions
     result :: [Bool]
     result = runST $ do

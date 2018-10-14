@@ -94,7 +94,7 @@ genProgram acyclic size0 graph0 vs0 = do
             | Slow.hasEdge x y graph0 ->
                 return Nothing
             | otherwise ->
-                let (_, graph1) = Slow.insertEdge x y graph0 in
+                let graph1 = Slow.insertEdge x y graph0 in
                 return $ Just (InsertEdge x y, graph1, vs0)
 
     genDeleteVertex = do
@@ -109,7 +109,7 @@ genProgram acyclic size0 graph0 vs0 = do
             return Nothing
         else do
             y <- QC.elements nbs
-            let (_, graph1) = Slow.deleteEdge x y graph0
+            let graph1 = Slow.deleteEdge x y graph0
             return $ Just (DeleteEdge x y, graph1, vs0)
 
     genConnected = do

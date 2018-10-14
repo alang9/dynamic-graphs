@@ -13,7 +13,6 @@ import Control.Monad
 import Control.Monad.ST
 import Data.List
 import Data.Maybe
-import qualified Data.Set as Set
 import Test.Framework
 import Test.Framework.TH
 import Test.Framework.Providers.QuickCheck2
@@ -21,36 +20,35 @@ import Test.QuickCheck
 
 import qualified Data.Graph.Dynamic.EulerTour as ET
 import Data.Graph.Dynamic.Internal.Tree (Tree)
+import qualified Data.Graph.Dynamic.Slow as Slow
 
 import Action
-import Graph
 
-runSlowForestAction ::
-  Graph -> Action t -> (Graph, Maybe Bool)
-runSlowForestAction Graph {..} (Cut x y) = (Graph {edges = Set.delete (x', y') (Set.delete (y', x') edges), ..}, Nothing)
+runSlowForestAction
+    :: Slow.Graph Int -> Action t -> (Slow.Graph Int, Maybe Bool)
+runSlowForestAction graph (Cut x y) =
+    (Slow.deleteEdge x' y' graph, Nothing)
   where
-    x' = mod x numNodes
-    y' = mod y numNodes
-runSlowForestAction sf@Graph {..} (Link x y) = (newSf, Nothing)
+    x' = mod x (Slow.numVertices graph)
+    y' = mod y (Slow.numVertices graph)
+runSlowForestAction graph (Link x y)
+    | Slow.connected x' y' graph = (graph, Nothing)
+    | otherwise                  = (Slow.insertEdge x' y' graph, Nothing)
   where
-    newSf = if alreadyConnected then sf else Graph {edges = Set.insert (x', y') (Set.insert (y', x') edges), ..}
-    alreadyConnected = Set.member y' $ component x' sf
-    x' = mod x numNodes
-    y' = mod y numNodes
-runSlowForestAction sf@Graph {..} (Toggle x y) = (newSf, Nothing)
+    x' = mod x (Slow.numVertices graph)
+    y' = mod y (Slow.numVertices graph)
+runSlowForestAction graph (Toggle x y)
+    | Slow.hasEdge x' y' graph   = (Slow.deleteEdge x' y' graph, Nothing)
+    | Slow.connected x' y' graph = (graph, Nothing)
+    | otherwise                  = (Slow.insertEdge x' y' graph, Nothing)
   where
-    newSf = if Set.member (x', y') edges
-      then Graph {edges = Set.delete (x', y') (Set.delete (y', x') edges), ..}
-      else if alreadyConnected
-             then sf
-             else Graph {edges = Set.insert (x', y') (Set.insert (y', x') edges), ..}
-    alreadyConnected = Set.member y' $ component x' sf
-    x' = mod x numNodes
-    y' = mod y numNodes
-runSlowForestAction sf@Graph {..} (Query x y) = (sf, Just (Set.member y' $ component x' sf))
+    x' = mod x (Slow.numVertices graph)
+    y' = mod y (Slow.numVertices graph)
+runSlowForestAction graph (Query x y) =
+    (graph, Just (Slow.connected x' y' graph))
   where
-    x' = mod x numNodes
-    y' = mod y numNodes
+    x' = mod x (Slow.numVertices graph)
+    y' = mod y (Slow.numVertices graph)
 
 runForestAction :: (Monoid a, Tree tree) =>
   Int -> ET.Forest tree a s Int -> [Bool] -> Action t -> ST s [Bool]
@@ -78,7 +76,7 @@ runForestAction n etf xs (Query x y) = ET.connected etf x' y' >>= \case
 checkActions :: Positive Int -> [Action t] -> Property
 checkActions (Positive n) actions = slowResult === result
   where
-    initialGraph = discreteGraph n
+    initialGraph = Slow.fromVertices [0..n-1]
     slowResult = catMaybes $ snd $ mapAccumL runSlowForestAction initialGraph actions
     result :: [Bool]
     result = runST $ do

@@ -49,7 +49,6 @@ test-suite dynamic-connectivity-tests
 
   other-modules:
     Action
-    Graph
 
     Data.Graph.Dynamic.EulerTour.Tests
     Data.Graph.Dynamic.EulerTour.Tests2

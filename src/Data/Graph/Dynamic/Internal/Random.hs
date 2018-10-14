@@ -23,11 +23,9 @@ module Data.Graph.Dynamic.Internal.Random
     , assertRoot
     ) where
 
-import           Control.Monad                    (foldM, when)
+import           Control.Monad                    (when)
 import           Control.Monad.Primitive          (PrimMonad (..))
 import qualified Data.Graph.Dynamic.Internal.Tree as Class
-import           Data.List.NonEmpty               (NonEmpty)
-import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Monoid                      ((<>))
 import           Data.Primitive.MutVar            (MutVar)
 import qualified Data.Primitive.MutVar            as MutVar
