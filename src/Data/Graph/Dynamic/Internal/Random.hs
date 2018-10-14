@@ -63,6 +63,10 @@ nil :: Tree s a v
 nil = unsafeCoerce $ unsafePerformIO $ Tree <$> MutVar.newMutVar undefined
 {-# NOINLINE nil #-}
 
+hole :: Tree s a v
+hole = unsafeCoerce $ unsafePerformIO $ Tree <$> MutVar.newMutVar undefined
+{-# NOINLINE hole #-}
+
 newtype Tree s a v = Tree (MutVar s (T s a v)) deriving (Eq)
 
 singleton
@@ -83,7 +87,8 @@ append
     => Tree (PrimState m) a v
     -> Tree (PrimState m) a v
     -> m (Tree (PrimState m) a v)
-append = merge
+append = do
+    merge1 nil
 
 merge
     :: (PrimMonad m, Monoid v)
@@ -106,6 +111,55 @@ merge xt@(Tree xv) yt@(Tree yv)
             MutVar.writeMutVar xv $! x {tRight = rt, tAgg = tAgg x <> tAgg y}
             MutVar.modifyMutVar rv $ \r -> r {tParent = xt}
             return xt
+
+-- | Our merge consists of two parts: a downwards merge that breaks a lot of
+-- invariants such as parents and aggregates, followed by an upwards merge that
+-- restores these.  This helps us stay tail-recursive.
+merge1
+    :: (PrimMonad m, Monoid v)
+    => Tree (PrimState m) a v
+    -> Tree (PrimState m) a v
+    -> Tree (PrimState m) a v
+    -> m (Tree (PrimState m) a v)
+merge1 pt@(Tree pv) xt@(Tree xv) yt@(Tree yv)
+    | xt == nil, yt == nil = do
+        MutVar.modifyMutVar pv $ \p -> p {tLeft = nil, tRight = nil}
+        merge2 pt
+    | yt == nil = do
+        MutVar.modifyMutVar xv $ \x -> x {tParent = pt}
+        merge2 xt
+    | xt == nil = do
+        MutVar.modifyMutVar yv $ \y -> y {tParent = pt}
+        merge2 yt
+    | otherwise = do
+        x <- MutVar.readMutVar xv
+        y <- MutVar.readMutVar yv
+        if tRandom x < tRandom y then do
+            MutVar.writeMutVar yv $! y {tParent = pt, tLeft = hole}
+            merge1 yt xt (tLeft y)
+        else do
+            MutVar.writeMutVar xv $! x {tParent = pt, tRight = hole}
+            merge1 xt (tRight x) yt
+
+merge2
+    :: (PrimMonad m, Monoid v)
+    => Tree (PrimState m) a v
+    -> m (Tree (PrimState m) a v)
+merge2 xt@(Tree xv) = do
+    x <- MutVar.readMutVar xv
+    let pt@(Tree pv) = tParent x
+    if pt == nil then do
+        return xt
+    else do
+        p <- MutVar.readMutVar pv
+        if tLeft p == hole then do
+            pra <- if tRight p == nil then return mempty else aggregate (tRight p)
+            MutVar.writeMutVar pv $! p {tLeft = xt, tAgg = tAgg x <> tValue p <> pra}
+            merge2 pt
+        else do
+            pla <- if tLeft p == nil then return mempty else aggregate (tLeft p)
+            MutVar.writeMutVar pv $! p {tRight = xt, tAgg = pla <> tValue p <> tAgg x}
+            merge2 pt
 
 split
     :: (PrimMonad m, Monoid v)
