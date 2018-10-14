@@ -48,20 +48,18 @@ test-suite dynamic-connectivity-tests
   default-language: Haskell2010
 
   other-modules:
-    Action
-
     Data.Graph.Dynamic.EulerTour.Tests
-    Data.Graph.Dynamic.EulerTour.Tests2
     Data.Graph.Dynamic.Internal.BitVector.Tests
     Data.Graph.Dynamic.Internal.FastAvl.Tests
     Data.Graph.Dynamic.Internal.Splay.Tests
     Data.Graph.Dynamic.Internal.Random.Tests
     Data.Graph.Dynamic.Internal.Tree.Tests
     Data.Graph.Dynamic.Levels.Tests
-    Data.Graph.Dynamic.Levels.Tests2
 
     Data.Graph.Dynamic.Program
     Data.Graph.Dynamic.Slow
+    Data.Graph.Dynamic.Action
+
 
   build-depends:
     aeson,
