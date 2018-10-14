@@ -22,7 +22,6 @@ library
     Data.Graph.Dynamic.Levels
 
     Data.Graph.Dynamic.Internal.Avl
-    Data.Graph.Dynamic.Internal.BitVector
     Data.Graph.Dynamic.Internal.Splay
     Data.Graph.Dynamic.Internal.Random
     Data.Graph.Dynamic.Internal.Tree
@@ -49,7 +48,6 @@ test-suite dynamic-connectivity-tests
 
   other-modules:
     Data.Graph.Dynamic.EulerTour.Tests
-    Data.Graph.Dynamic.Internal.BitVector.Tests
     Data.Graph.Dynamic.Internal.FastAvl.Tests
     Data.Graph.Dynamic.Internal.Splay.Tests
     Data.Graph.Dynamic.Internal.Random.Tests
