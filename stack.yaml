@@ -1,0 +1,6 @@
+resolver: 'lts-11.7'
+packages:
+- '.'
+flags:
+  dynamic-connectivity:
+    build-extra-executables: true
