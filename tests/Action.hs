@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
@@ -11,15 +12,17 @@ import Test.QuickCheck
 
 data ActionType = LinkCut | Toggl
 
-data Action (t :: ActionType) where
-  Cut :: !Int -> !Int -> Action 'LinkCut
-  Link :: !Int -> !Int -> Action 'LinkCut
-  Toggle :: !Int -> !Int -> Action 'Toggl
-  Query :: !Int -> !Int -> Action a
+data Action (t :: ActionType) v where
+  Cut :: !v -> !v -> Action 'LinkCut v
+  Link :: !v -> !v -> Action 'LinkCut v
+  Toggle :: !v -> !v -> Action 'Toggl v
+  Query :: !v -> !v -> Action a v
 
-deriving instance Show (Action t)
+deriving instance Show v => Show (Action t v)
 
-instance Arbitrary (Action 'LinkCut) where
+deriving instance Functor (Action t)
+
+instance Arbitrary v => Arbitrary (Action 'LinkCut v) where
   arbitrary = oneof
     [ Cut <$> arbitrary <*> arbitrary
     , Link <$> arbitrary <*> arbitrary
@@ -29,7 +32,7 @@ instance Arbitrary (Action 'LinkCut) where
   shrink (Cut a b) = Cut <$> shrink a <*> shrink b
   shrink (Query a b) = Query <$> shrink a <*> shrink b
 
-instance Arbitrary (Action 'Toggl) where
+instance Arbitrary v => Arbitrary (Action 'Toggl v) where
   arbitrary = oneof
     [ Toggle <$> arbitrary <*> arbitrary
     , Query <$> arbitrary <*> arbitrary

@@ -23,74 +23,51 @@ import qualified Data.Graph.Dynamic.Levels            as Levels
 import           Action
 import qualified Data.Graph.Dynamic.Slow              as Slow
 
-runSlowGraphAction :: Slow.Graph Int -> Action t -> (Slow.Graph Int, Maybe Bool)
+runSlowGraphAction :: Slow.Graph Int -> Action t Int -> (Slow.Graph Int, Maybe Bool)
 runSlowGraphAction graph (Cut x y) =
-    (Slow.deleteEdge x' y' graph, Nothing)
-  where
-    x' = mod x (Slow.numVertices graph)
-    y' = mod y (Slow.numVertices graph)
+    (Slow.deleteEdge x y graph, Nothing)
 runSlowGraphAction graph (Link x y) =
-    (Slow.insertEdge x' y' graph, Nothing)
-  where
-    x' = mod x (Slow.numVertices graph)
-    y' = mod y (Slow.numVertices graph)
+    (Slow.insertEdge x y graph, Nothing)
 runSlowGraphAction graph (Toggle x y)
-    | Slow.hasEdge x' y' graph = (Slow.deleteEdge x' y' graph, Nothing)
-    | otherwise                = (Slow.insertEdge x' y' graph, Nothing)
-  where
-    x' = mod x (Slow.numVertices graph)
-    y' = mod y (Slow.numVertices graph)
+    | Slow.hasEdge x y graph = (Slow.deleteEdge x y graph, Nothing)
+    | otherwise              = (Slow.insertEdge x y graph, Nothing)
 runSlowGraphAction graph (Query x y) =
-    (graph, Just (Slow.connected x' y' graph))
-  where
-    x' = mod x (Slow.numVertices graph)
-    y' = mod y (Slow.numVertices graph)
+    (graph, Just (Slow.connected x y graph))
 
 runGraphAction :: Tree tree =>
-  Int -> Levels.Graph tree s Int -> [Bool] -> Action t -> ST s [Bool]
-runGraphAction n levels xs (Cut x y) = do
-    Levels.deleteEdge levels x' y'
+  Levels.Graph tree s Int -> [Bool] -> Action t Int -> ST s [Bool]
+runGraphAction levels xs (Cut x y) = do
+    Levels.deleteEdge levels x y
     return xs
-  where
-    x' = mod x n
-    y' = mod y n
-runGraphAction n levels xs (Link x y) = do
-  _ <- Levels.insertEdge levels x' y'
+runGraphAction levels xs (Link x y) = do
+  _ <- Levels.insertEdge levels x y
   return xs
-  where
-    x' = mod x n
-    y' = mod y n
-runGraphAction n levels xs (Toggle x y) = do
-  Levels.hasEdge levels x' y' >>= \case
-    True  -> Levels.deleteEdge levels x' y'
-    False -> void $ Levels.insertEdge levels x' y'
+runGraphAction levels xs (Toggle x y) = do
+  Levels.hasEdge levels x y >>= \case
+    True  -> Levels.deleteEdge levels x y
+    False -> void $ Levels.insertEdge levels x y
   return xs
-  where
-    x' = mod x n
-    y' = mod y n
-runGraphAction n levels xs (Query x y) = Levels.connected levels x' y' >>= \case
+runGraphAction levels xs (Query x y) = Levels.connected levels x y >>= \case
   Nothing -> return xs
   Just q -> do
     return (q:xs)
-  where
-    x' = mod x n
-    y' = mod y n
 
-checkActions :: Positive Int -> [Action t] -> Property
+checkActions :: Positive Int -> [Action t Int] -> Property
 checkActions (Positive n) actions = slowResult === result
   where
+    actions' = map (fmap (`mod` n)) actions
     initialSlowGraph = Slow.fromVertices [0..n-1]
-    slowResult = catMaybes $ snd $ mapAccumL runSlowGraphAction initialSlowGraph actions
+    slowResult = catMaybes $ snd $ mapAccumL runSlowGraphAction initialSlowGraph actions'
     result :: [Bool]
     result = runST $ do
       initialGraph <- Levels.fromVertices' [0..n-1]
-      results <- foldM (runGraphAction n initialGraph) [] actions
+      results <- foldM (runGraphAction initialGraph) [] actions'
       return $ reverse results
 
-prop_graph_linkcut :: Positive Int -> [Action 'LinkCut] -> Property
+prop_graph_linkcut :: Positive Int -> [Action 'LinkCut Int] -> Property
 prop_graph_linkcut = checkActions
 
-prop_graph_toggle :: Positive Int -> [Action 'Toggl] -> Property
+prop_graph_toggle :: Positive Int -> [Action 'Toggl Int] -> Property
 prop_graph_toggle = checkActions
 
 tests :: Test
