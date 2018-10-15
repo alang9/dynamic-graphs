@@ -8,13 +8,12 @@
 
 module Data.Graph.Dynamic.Levels.Tests where
 
-import           Control.Monad                        (foldM, void)
+import           Control.Monad                        (foldM)
 import           Control.Monad.ST
 import           Data.Graph.Dynamic.Action
-import qualified Data.Graph.Dynamic.Internal.Random   as Random
 import           Data.Graph.Dynamic.Internal.Tree     (Tree)
 import qualified Data.Graph.Dynamic.Levels            as Levels
-import           Data.Graph.Dynamic.Program
+import qualified Data.Graph.Dynamic.Program           as Program
 import qualified Data.Graph.Dynamic.Slow              as Slow
 import           Data.Hashable                        (Hashable)
 import           Data.List                            (mapAccumL)
@@ -28,15 +27,15 @@ runGraphAction
     :: (Eq v, Hashable v, Tree tree)
     => Levels.Graph tree s v -> [Bool] -> Action t v -> ST s [Bool]
 runGraphAction levels xs (Cut x y) = do
-    Levels.deleteEdge levels x y
+    Levels.cut_ levels x y
     return xs
 runGraphAction levels xs (Link x y) = do
-  _ <- Levels.insertEdge levels x y
+  Levels.link_ levels x y
   return xs
 runGraphAction levels xs (Toggle x y) = do
-  Levels.hasEdge levels x y >>= \case
-    True  -> Levels.deleteEdge levels x y
-    False -> void $ Levels.insertEdge levels x y
+  Levels.edge levels x y >>= \case
+    True  -> Levels.cut_ levels x y
+    False -> Levels.link_ levels x y
   return xs
 runGraphAction levels xs (Query x y) = Levels.connected levels x y >>= \case
   Nothing -> return xs
@@ -47,11 +46,11 @@ checkActions :: QC.Positive Int -> [Action t Int] -> QC.Property
 checkActions (QC.Positive n) actions = slowResult QC.=== result
   where
     actions' = map (fmap (`mod` n)) actions
-    initialSlowGraph = Slow.fromVertices [0..n-1]
+    initialSlowGraph = Slow.edgeless [0..n-1]
     slowResult = catMaybes $ snd $ mapAccumL runSlowGraphAction initialSlowGraph actions'
     result :: [Bool]
     result = runST $ do
-      initialGraph <- Levels.fromVertices' [0..n-1]
+      initialGraph <- Levels.edgeless' [0..n-1]
       results <- foldM (runGraphAction initialGraph) [] actions'
       return $ reverse results
 
@@ -61,13 +60,10 @@ prop_graph_linkcut = checkActions
 prop_graph_toggle :: QC.Positive Int -> [Action 'Toggl Int] -> QC.Property
 prop_graph_toggle = checkActions
 
-prop_program :: IntGraphProgram -> ()
-prop_program (IntGraphProgram p) = runST go
-  where
-    go :: forall s. ST s ()
-    go = do
-        f <- Levels.new :: ST s (Levels.Graph Random.Tree s Int)
-        runProgram f p
+prop_program :: Program.IntGraphProgram -> ()
+prop_program (Program.IntGraphProgram p) = runST $ do
+    f <- Levels.empty'
+    Program.runProgram f p
 
 tests :: Test
 tests = $testGroupGenerator

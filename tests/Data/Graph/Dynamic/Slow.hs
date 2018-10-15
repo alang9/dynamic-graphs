@@ -3,12 +3,12 @@
 module Data.Graph.Dynamic.Slow
     ( Graph
     , empty
-    , fromVertices
-    , insertVertex
-    , insertEdge
-    , deleteVertex
-    , deleteEdge
-    , hasEdge
+    , edgeless
+    , insert
+    , link
+    , delete
+    , cut
+    , edge
     , connected
     , neighbours
     , vertices
@@ -27,29 +27,29 @@ newtype Graph v = Graph
 empty :: Graph v
 empty = Graph HMS.empty
 
-fromVertices :: (Eq v, Hashable v) => [v] -> Graph v
-fromVertices verts = Graph $
+edgeless :: (Eq v, Hashable v) => [v] -> Graph v
+edgeless verts = Graph $
     HMS.fromList [(v, HS.empty) | v <- verts]
 
-insertVertex :: (Eq v, Hashable v) => v -> Graph v -> Graph v
-insertVertex v = Graph . HMS.insert v HS.empty . unGraph
+insert :: (Eq v, Hashable v) => v -> Graph v -> Graph v
+insert v = Graph . HMS.insert v HS.empty . unGraph
 
-insertEdge :: (Eq v, Hashable v) => v -> v -> Graph v -> Graph v
-insertEdge x y g = Graph $
+link :: (Eq v, Hashable v) => v -> v -> Graph v -> Graph v
+link x y g = Graph $
     HMS.insertWith HS.union x (HS.singleton y) $
     HMS.insertWith HS.union y (HS.singleton x) $
     unGraph g
 
-deleteVertex :: (Eq v, Hashable v) => v -> Graph v -> Graph v
-deleteVertex x g | not (x `HMS.member` unGraph g) = g
-deleteVertex x g0 =
+delete :: (Eq v, Hashable v) => v -> Graph v -> Graph v
+delete x g | not (x `HMS.member` unGraph g) = g
+delete x g0 =
     let nbs = neighbours x g0
-        g1  = List.foldl' (\g n -> deleteEdge x n g) g0 nbs in
+        g1  = List.foldl' (\g n -> cut x n g) g0 nbs in
     Graph $ HMS.delete x (unGraph g1)
 
 
-deleteEdge :: (Eq v, Hashable v) => v -> v -> Graph v -> Graph v
-deleteEdge x y g =
+cut :: (Eq v, Hashable v) => v -> v -> Graph v -> Graph v
+cut x y g =
     let graph =
             HMS.adjust (HS.delete y) x $
             HMS.adjust (HS.delete x) y $
@@ -59,8 +59,8 @@ deleteEdge x y g =
 neighbours :: (Eq v, Hashable v) => v -> Graph v -> HS.HashSet v
 neighbours x g = fromMaybe HS.empty $ HMS.lookup x (unGraph g)
 
-hasEdge :: (Eq v, Hashable v) => v -> v -> Graph v -> Bool
-hasEdge x y g = y `HS.member` neighbours x g
+edge :: (Eq v, Hashable v) => v -> v -> Graph v -> Bool
+edge x y g = y `HS.member` neighbours x g
 
 connected :: (Eq v, Hashable v) => v -> v -> Graph v -> Bool
 connected x y g = go HS.empty (HS.singleton x)

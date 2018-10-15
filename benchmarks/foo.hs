@@ -4,10 +4,8 @@
 {-# OPTIONS_GHC -fprof-auto #-}
 
 import           Control.DeepSeq
-import           Control.Monad.Primitive            (RealWorld)
-import qualified Data.Graph.Dynamic.EulerTour       as ETF
-import qualified Data.Graph.Dynamic.Internal.Random as Random
-import qualified Data.Graph.Dynamic.Levels          as Levels
+import qualified Data.Graph.Dynamic.EulerTour as ETF
+import qualified Data.Graph.Dynamic.Levels    as Levels
 
 main :: IO ()
 main = do
@@ -16,12 +14,11 @@ main = do
 
 completeGraph :: Int -> IO [(Maybe Bool, Maybe Bool)]
 completeGraph n = do
-  levels <- Levels.fromVertices vertices
-    :: IO (Levels.Graph Random.Tree RealWorld (Int, Int, Int))
-  mapM_ (\(x, y) -> Levels.insertEdge levels x y) edges
+  levels <- Levels.edgeless' vertices
+  mapM_ (\(x, y) -> Levels.link levels x y) edges
   mapM (\(x, y) -> do
            c1 <- Levels.connected levels x y
-           Levels.deleteEdge levels x y
+           Levels.cut levels x y
            c2 <- Levels.connected levels x y
            return (c1, c2)
        ) edges
@@ -35,12 +32,11 @@ completeGraph n = do
 
 completeBinaryTree :: Int -> IO [(Maybe Bool, Maybe Bool)]
 completeBinaryTree n = do
-  etf <- ETF.discreteForest (\_ _ -> ()) [0..n-1]
-    :: IO (ETF.Graph Random.Tree RealWorld Int)
-  mapM_ (\(x, y) -> ETF.insertEdge etf x y) edges
+  etf <- ETF.edgeless' [0..n-1]
+  mapM_ (\(x, y) -> ETF.link etf x y) edges
   mapM (\(x, y) -> do
            c1 <- ETF.connected etf x y
-           ETF.deleteEdge etf x y
+           ETF.cut etf x y
            c2 <- ETF.connected etf x y
            return (c1, c2)
        ) edges

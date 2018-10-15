@@ -53,14 +53,14 @@ runSlowForestAction
     :: (Eq v, Hashable v)
     => Slow.Graph v -> Action t v -> (Slow.Graph v, Maybe Bool)
 runSlowForestAction graph (Cut x y) =
-    (Slow.deleteEdge x y graph, Nothing)
+    (Slow.cut x y graph, Nothing)
 runSlowForestAction graph (Link x y)
     | Slow.connected x y graph = (graph, Nothing)
-    | otherwise                  = (Slow.insertEdge x y graph, Nothing)
+    | otherwise                = (Slow.link x y graph, Nothing)
 runSlowForestAction graph (Toggle x y)
-    | Slow.hasEdge x y graph   = (Slow.deleteEdge x y graph, Nothing)
+    | Slow.edge x y graph      = (Slow.cut x y graph, Nothing)
     | Slow.connected x y graph = (graph, Nothing)
-    | otherwise                  = (Slow.insertEdge x y graph, Nothing)
+    | otherwise                = (Slow.link x y graph, Nothing)
 runSlowForestAction graph (Query x y) =
     (graph, Just (Slow.connected x y graph))
 
@@ -68,11 +68,11 @@ runSlowGraphAction
     :: (Eq v, Hashable v)
     => Slow.Graph v -> Action t v -> (Slow.Graph v, Maybe Bool)
 runSlowGraphAction graph (Cut x y) =
-    (Slow.deleteEdge x y graph, Nothing)
+    (Slow.cut x y graph, Nothing)
 runSlowGraphAction graph (Link x y) =
-    (Slow.insertEdge x y graph, Nothing)
+    (Slow.link x y graph, Nothing)
 runSlowGraphAction graph (Toggle x y)
-    | Slow.hasEdge x y graph = (Slow.deleteEdge x y graph, Nothing)
-    | otherwise              = (Slow.insertEdge x y graph, Nothing)
+    | Slow.edge x y graph = (Slow.cut x y graph, Nothing)
+    | otherwise           = (Slow.link x y graph, Nothing)
 runSlowGraphAction graph (Query x y) =
     (graph, Just (Slow.connected x y graph))

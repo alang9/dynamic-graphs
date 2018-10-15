@@ -21,8 +21,8 @@ module Data.Graph.Dynamic.Program
     , decodeInt
     ) where
 
-import Control.DeepSeq
-import           Control.Monad                    (void, when)
+import           Control.DeepSeq
+import           Control.Monad                    (when)
 import           Control.Monad.Primitive          (PrimMonad (..))
 import qualified Data.Graph.Dynamic.EulerTour     as ET
 import           Data.Graph.Dynamic.Internal.Tree (Tree)
@@ -36,17 +36,17 @@ import           Data.Monoid                      ((<>))
 import qualified Data.Text                        as T
 import qualified Data.Text.Lazy                   as TL
 import qualified Data.Text.Lazy.Builder           as TLB
-import GHC.Generics
+import           GHC.Generics
 import qualified Test.QuickCheck                  as QC
 import           Text.Read                        (readMaybe)
 
 type Program v = [Instruction v]
 
 data Instruction v
-    = InsertVertex v
-    | InsertEdge v v
-    | DeleteVertex v
-    | DeleteEdge v v
+    = Insert v
+    | Link v v
+    | Delete v
+    | Cut v v
     | Connected v v Bool
     deriving (Show, Generic)
 
@@ -66,10 +66,10 @@ genProgram acyclic size0 graph0 vs0 = do
             _           -> False
 
     mbInstruction <- QC.frequency $
-        [(10, genInsertVertex)] ++
-        [(30, genInsertEdge) | hasSomeVertices] ++
-        [(1,  genDeleteVertex) | hasSomeVertices] ++
-        [(10, genDeleteEdge) | hasSomeVertices] ++
+        [(10, genInsert)] ++
+        [(30, genLink) | hasSomeVertices] ++
+        [(1,  genDelete) | hasSomeVertices] ++
+        [(10, genCut) | hasSomeVertices] ++
         [(30, genConnected) | hasSomeVertices]
 
     case mbInstruction of
@@ -77,40 +77,40 @@ genProgram acyclic size0 graph0 vs0 = do
         Just (instr, graph1, vs1) -> (instr :) <$>
             genProgram acyclic (size0 - 1) graph1 vs1
   where
-    genInsertVertex =
+    genInsert =
         let (v, vs1) = case vs0 of
                 []       -> error "Ran out of Vs..."
                 (x : xs) -> (x, xs)
 
-            graph1 = Slow.insertVertex v graph0 in
+            graph1 = Slow.insert v graph0 in
 
-        return $ Just (InsertVertex v, graph1, vs1)
+        return $ Just (Insert v, graph1, vs1)
 
-    genInsertEdge = do
+    genLink = do
         x <- QC.elements $ Slow.vertices graph0
         y <- QC.elements $ Slow.vertices graph0 \\ [x]
         if  | Slow.connected x y graph0 && acyclic ->
                 return Nothing
-            | Slow.hasEdge x y graph0 ->
+            | Slow.edge x y graph0 ->
                 return Nothing
             | otherwise ->
-                let graph1 = Slow.insertEdge x y graph0 in
-                return $ Just (InsertEdge x y, graph1, vs0)
+                let graph1 = Slow.link x y graph0 in
+                return $ Just (Link x y, graph1, vs0)
 
-    genDeleteVertex = do
+    genDelete = do
         v <- QC.elements $ Slow.vertices graph0
-        let graph1 = Slow.deleteVertex v graph0
-        return $ Just (DeleteVertex v, graph1, v : vs0)
+        let graph1 = Slow.delete v graph0
+        return $ Just (Delete v, graph1, v : vs0)
 
-    genDeleteEdge = do
+    genCut = do
         x <- QC.elements $ Slow.vertices graph0
         let nbs = HS.toList $ Slow.neighbours x graph0
         if null nbs then
             return Nothing
         else do
             y <- QC.elements nbs
-            let graph1 = Slow.deleteEdge x y graph0
-            return $ Just (DeleteEdge x y, graph1, vs0)
+            let graph1 = Slow.cut x y graph0
+            return $ Just (Cut x y, graph1, vs0)
 
     genConnected = do
         x <- QC.elements $ Slow.vertices graph0
@@ -120,16 +120,16 @@ genProgram acyclic size0 graph0 vs0 = do
 
 -- | A graph that we can interpret the program against.
 class Interpreter f where
-    insertVertex
+    insert
         :: (Eq v, Hashable v, PrimMonad m)
         => f (PrimState m) v -> v -> m ()
-    insertEdge
+    link
         :: (Eq v, Hashable v, PrimMonad m)
         => f (PrimState m) v -> v -> v -> m ()
-    deleteVertex
+    delete
         :: (Eq v, Hashable v, PrimMonad m)
         => f (PrimState m) v -> v -> m ()
-    deleteEdge
+    cut
         :: (Eq v, Hashable v, PrimMonad m)
         => f (PrimState m) v -> v -> v -> m ()
     connected
@@ -137,17 +137,17 @@ class Interpreter f where
         => f (PrimState m) v -> v -> v -> m Bool
 
 instance Tree t => Interpreter (Levels.Graph t) where
-    insertVertex    = Levels.insertVertex
-    insertEdge f x y = void $ Levels.insertEdge f x y
-    deleteVertex    = Levels.deleteVertex
-    deleteEdge      = Levels.deleteEdge
+    insert          = Levels.insert_
+    link f x y      = Levels.link_ f x y
+    delete          = Levels.delete_
+    cut             = Levels.cut_
     connected f x y = fromMaybe False <$> Levels.connected f x y
 
-instance Tree t => Interpreter (ET.Graph t) where
-    insertVertex     = ET.insertVertex
-    insertEdge f x y = void $ ET.insertEdge f x y
-    deleteVertex     = ET.deleteVertex
-    deleteEdge f x y = void $ ET.deleteEdge f x y
+instance Tree t => Interpreter (ET.Forest t ()) where
+    insert           = ET.insert_
+    link f x y       = ET.link_ f x y
+    delete           = ET.delete_
+    cut f x y        = ET.cut_ f x y
     connected f x y  = fromMaybe False <$> ET.connected f x y
 
 runProgram
@@ -159,10 +159,10 @@ runProgram f = go (0 :: Int)
     go !i (instr : instrs) = do
 
         case instr of
-            InsertVertex x -> insertVertex f x
-            InsertEdge x y -> insertEdge f x y
-            DeleteVertex x -> deleteVertex f x
-            DeleteEdge x y -> deleteEdge f x y
+            Insert x -> insert f x
+            Link x y -> link f x y
+            Delete x -> delete f x
+            Cut x y -> cut f x y
             Connected x y expected -> do
                 actual <- connected f x y
                 when (expected /= actual) $ fail $
@@ -199,10 +199,10 @@ encodeProgram encodeVertex =
     b False = "false"
     b True  = "true"
 
-    encodeInstruction (InsertVertex x)  = "insert" <+> v x
-    encodeInstruction (InsertEdge x y)  = "link" <+> v x <+> v y
-    encodeInstruction (DeleteVertex x)  = "delete" <+> v x
-    encodeInstruction (DeleteEdge x y)  = "cut" <+> v x <+> v y
+    encodeInstruction (Insert x)        = "insert" <+> v x
+    encodeInstruction (Link x y)        = "link" <+> v x <+> v y
+    encodeInstruction (Delete x)        = "delete" <+> v x
+    encodeInstruction (Cut x y)         = "cut" <+> v x <+> v y
     encodeInstruction (Connected x y e) = "connected" <+> v x <+> v y <+> b e
 
 decodeProgram
@@ -216,10 +216,10 @@ decodeProgram decodeVertex =
     b x       = Left $ "Can't decode bool: " ++ T.unpack x
 
     decodeInstruction line = case T.words (TL.toStrict line) of
-        ["insert", x]          -> InsertVertex <$> v x
-        ["link", x, y]         -> InsertEdge <$> v x <*> v y
-        ["delete", x]          -> DeleteVertex <$> v x
-        ["cut", x, y]          -> DeleteEdge <$> v x <*> v y
+        ["insert", x]          -> Insert <$> v x
+        ["link", x, y]         -> Link <$> v x <*> v y
+        ["delete", x]          -> Delete <$> v x
+        ["cut", x, y]          -> Cut <$> v x <*> v y
         ["connected", x, y, e] -> Connected <$> v x <*> v y <*> b e
         _                      -> Left $
             "Can't decode instruction: " ++ TL.unpack line
