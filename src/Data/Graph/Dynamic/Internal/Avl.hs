@@ -75,45 +75,10 @@ singleton tLabel tValue = do
     MutVar.writeMutVar tRight  tree
     return tree
 
-{-
-fromNonEmpty
-    :: (PrimMonad m, Monoid v)
-    => NonEmpty.NonEmpty (a, v) -> m (Tree (PrimState m) a v)
-fromNonEmpty ((x0, v0) NonEmpty.:| list) = do
-    root <- singleton x0 v0
-    go root list
-    return root
-  where
-    go rightMost []            = return ()
-    go rightMost ((x, v) : xs) = do
-        tree <- singleton x v
-        setRight rightMost tree
-        updateAggs rightMost
-        go tree xs
--}
-
 root :: PrimMonad m => Tree (PrimState m) a v -> m (Tree (PrimState m) a v)
 root tree@Tree {..} = do
     parent <- MutVar.readMutVar tParent
     if parent == tree then return tree else root parent
-
-{-
-
--- | Appends two trees.  Returns the root of the tree.
-append
-    :: (PrimMonad m, Monoid v)
-    => Tree (PrimState m) a v
-    -> Tree (PrimState m) a v
-    -> m (Tree (PrimState m) a v)
-append x y = do
-    rm <- getRightMost x
-    splay rm
-    _ <- splay y
-    setRight rm y
-    updateAggs rm
-    return rm
-
--}
 
 concat
     :: (PrimMonad m, Monoid v)
@@ -178,14 +143,13 @@ append l0 r0 = do
     rm <- getRightMost l0
     (mbL, mbR) <- split rm
     case mbR of
-        Just _ -> error "wat"
+        Just _ -> error "append: invalid state"
         _      -> assertSingleton rm
     join mbL rm (Just r0)
   where
     getRightMost x = do
         r <- MutVar.readMutVar (tRight x)
         if r == x then return x else getRightMost r
-
 
 connected
     :: (PrimMonad m, Monoid v)
@@ -258,11 +222,9 @@ joinLeft mbL c r = do
             rotateLeft c rl
             rotateRight r rl
 
-            -- Many of these are already computed...
             updateAggs c
             updateAggs r
-            updateAggs rl
-            root rl
+            updateAggsToRoot rl
         else do
             -- One rotation
             updateAggs c
@@ -286,8 +248,7 @@ upLeft l = do
         if aHeight ra + 1 < aHeight la then do
             rotateRight p l
             updateAggs p
-            updateAggs l
-            root l
+            updateAggsToRoot l
         else do
             updateAggs p  -- Stuff below us might have changed.
             upLeft p
@@ -322,8 +283,7 @@ joinRight l c mbR = do
             -- Many of these are already computed...
             updateAggs l
             updateAggs c
-            updateAggs lr
-            root lr
+            updateAggsToRoot lr
         else do
             -- One rotation
             updateAggs c
@@ -347,8 +307,7 @@ upRight r = do
         if aHeight la + 1 < aHeight ra then do
             rotateLeft p r
             updateAggs p
-            updateAggs r
-            root r
+            updateAggsToRoot r
         else do
             updateAggs p  -- Stuff below us might have changed.
             upRight p
@@ -427,6 +386,16 @@ updateAggs t = do
     ra <- rightAggs t r
     let !agg = joinAggs la (tValue t) ra
     MutVar.writeMutVar (tAggs t) agg
+
+-- | Recompute aggregate and height all the way to the root of the tree.
+updateAggsToRoot
+    :: (PrimMonad m, Monoid v)
+    => Tree (PrimState m) a v
+    -> m (Tree (PrimState m) a v)
+updateAggsToRoot x = do
+    updateAggs x
+    p <- MutVar.readMutVar (tParent x)
+    if p == x then return x else updateAggsToRoot p
 
 -- | For debugging/testing.
 freeze :: PrimMonad m => Tree (PrimState m) a v -> m (Tree.Tree a)
