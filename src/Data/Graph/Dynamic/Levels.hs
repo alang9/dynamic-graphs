@@ -194,7 +194,6 @@ cut
 cut (Graph levels) a b = do
   L {..} <- readMutVar levels
   let newAllEdges = cutEdgeSet a b allEdges
-  -- | a == b = return Graph {..}
   if VM.length unLevels == 0 || a == b
     then return False
     else do
