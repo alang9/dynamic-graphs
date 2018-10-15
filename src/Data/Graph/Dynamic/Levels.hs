@@ -71,7 +71,7 @@ memberEdgeSet :: (Eq v, Hashable v) => v -> v -> EdgeSet v -> Bool
 memberEdgeSet x y = maybe False (y `HS.member`) . HMS.lookup x
 
 data L t s v = L
-  { numEdges :: !Int
+  { numVerts :: !Int
   , allEdges :: !(EdgeSet v)
   , unLevels :: !(VM.MVector s (ET.Forest t (Sum Int) s v, EdgeSet v))
   }
@@ -98,7 +98,7 @@ edgeless
 edgeless xs = do
   unLevels <- VM.new 0
   let allEdges = HMS.empty
-      numEdges = 0
+      numVerts = 0
   g <- Graph <$> newMutVar L {..}
   mapM_ (insert g) xs
   return g
@@ -136,8 +136,6 @@ link
 link (Graph levels) a b = do
   L {..} <- readMutVar levels
   let !newAllEdges = linkEdgeSet a b allEdges
-      !newNumEdges = numEdges + 1
-
   if memberEdgeSet a b allEdges || a == b || VM.null unLevels
     then return False
     else do
@@ -149,7 +147,7 @@ link (Graph levels) a b = do
 
       VM.write unLevels 0 (thisEtf, thisNonTreeEdges')
       writeMutVar levels $ L
-          {allEdges = newAllEdges, unLevels = unLevels, numEdges = newNumEdges}
+          {allEdges = newAllEdges, unLevels = unLevels, numVerts = numVerts}
       return True
 
 -- | Version of 'link' which ignores the result.
@@ -201,8 +199,7 @@ cut (Graph levels) a b = do
     then return False
     else do
       cut' <- go unLevels (VM.length unLevels-1)
-      let newNumEdges = if cut' then numEdges - 1 else numEdges
-      writeMutVar levels L {allEdges = newAllEdges, numEdges = newNumEdges, ..}
+      writeMutVar levels L {allEdges = newAllEdges, ..}
       return cut'
   where
     go :: VM.MVector (PrimState m) (ET.Forest t (Sum Int) (PrimState m) v, EdgeSet v) -> Int -> m Bool
@@ -298,7 +295,7 @@ insert (Graph g) x = do
       return False
   else do
     let newAllEdges = HMS.insert x HS.empty allEdges
-    let numVertices = HMS.size newAllEdges
+    let numVertices = numVerts + 1
     unLevels' <- do
       let oldNumLevels = VM.length unLevels
       newUnLevels <- VM.take (logBase2 numVertices + 1) <$>
@@ -316,7 +313,7 @@ insert (Graph g) x = do
                 updateLevel (i + 1)
 
     updateLevel 0
-    writeMutVar g $ l {allEdges = newAllEdges, unLevels = unLevels'}
+    writeMutVar g $ l {allEdges = newAllEdges, unLevels = unLevels', numVerts = numVertices}
     return True
 
 -- | Version of 'insert' which ignores the result.
@@ -349,7 +346,7 @@ delete g@(Graph levels) x = do
                   updateLevel (i + 1)
 
       updateLevel 0
-      writeMutVar levels $ l1 {allEdges = newAllEdges}
+      writeMutVar levels $ l1 {allEdges = newAllEdges, numVerts = numVerts l0 - 1}
       return True
 
 -- | Version of 'delete' which ignores the result.
