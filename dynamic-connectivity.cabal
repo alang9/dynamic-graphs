@@ -30,7 +30,6 @@ library
     Data.Graph.Dynamic.Internal.Splay
     Data.Graph.Dynamic.Internal.Random
     Data.Graph.Dynamic.Internal.Tree
-    Data.Graph.Dynamic.Internal.FastAvl
     Data.Graph.Dynamic.Internal.HashTable
 
   build-depends:
@@ -53,7 +52,7 @@ test-suite dynamic-connectivity-tests
 
   other-modules:
     Data.Graph.Dynamic.EulerTour.Tests
-    Data.Graph.Dynamic.Internal.FastAvl.Tests
+    Data.Graph.Dynamic.Internal.Avl.Tests
     Data.Graph.Dynamic.Internal.Splay.Tests
     Data.Graph.Dynamic.Internal.Random.Tests
     Data.Graph.Dynamic.Internal.Tree.Tests
