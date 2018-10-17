@@ -124,7 +124,7 @@ class Interpreter f where
         :: (Eq v, Hashable v, PrimMonad m)
         => f (PrimState m) v -> v -> m ()
     deleteEdge
-        :: (Eq v, Hashable v, PrimMonad m)
+        :: (Eq v, Hashable v, PrimMonad m, Ord v)
         => f (PrimState m) v -> v -> v -> m ()
     connected
         :: (Eq v, Hashable v, PrimMonad m, Ord v)
