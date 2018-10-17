@@ -22,7 +22,7 @@ instance Interpreter Thorup2000.Graph where
     insertVertex    = Thorup2000.insertVertex
     insertEdge      = Thorup2000.insertEdge
     deleteVertex    = undefined
-    deleteEdge      = undefined
+    deleteEdge      = Thorup2000.deleteEdge
     connected f x y = fromMaybe False <$> Thorup2000.connected f x y
 
 prop_program :: IntGraphProgram -> ()
