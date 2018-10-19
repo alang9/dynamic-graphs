@@ -21,7 +21,6 @@ import Data.Hashable (Hashable)
 import qualified Data.Map as Map
 import Data.Map (Map)
 import Data.Maybe
-import Data.Monoid
 import Data.Primitive.MutVar
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -712,22 +711,49 @@ getLevel lvl n = do
             writeMutVar n $ SLeaf {lParent = lrLeaf, ..}
             return newSNode
 
-sizeWithout ::
+findSmaller ::
+  (PrimMonad m, s ~ PrimState m, Ord v) =>
+  Graph s v -> Level -> v -> v -> m (Either (Int, Set (v,v)) (Int, Set (v, v)))
+findSmaller g lvl v1 v2 = go (SizeWithoutState 0 Set.empty [(v2, v1)]) (SizeWithoutState 0 Set.empty [(v1, v2)])
+  where
+    go sws1 sws2
+      | sizeSoFar sws1 <= sizeSoFar sws2 =
+          case processQueue sws1 of
+            [] -> return $ Left (sizeSoFar sws1, edgesSoFar sws1)
+            ((a, b):xs) -> do
+              (cnt, newNeighbours) <- sizeWithoutStep g lvl a b
+              go (SizeWithoutState (sizeSoFar sws1 + cnt) (Set.union (edgesSoFar sws1) newNeighbours)
+                  (Set.toList newNeighbours ++ xs)) sws2
+      | otherwise =
+          case processQueue sws2 of
+            [] -> return $ Right (sizeSoFar sws2, edgesSoFar sws2)
+            ((a, b):xs) -> do
+              (cnt, newNeighbours) <- sizeWithoutStep g lvl a b
+              go sws1 (SizeWithoutState (sizeSoFar sws2 + cnt) (Set.union (edgesSoFar sws2) newNeighbours)
+                       (Set.toList newNeighbours ++ xs))
+
+data SizeWithoutState v = SizeWithoutState
+  { sizeSoFar :: {-# UNPACK #-} !Int
+  , edgesSoFar :: !(Set (v, v))
+  , processQueue :: !([(v, v)])
+  }
+
+sizeWithoutStep ::
   forall m s v. (PrimMonad m, s ~ PrimState m, Ord v) =>
-  Graph s v -> Level -> v -> v -> m (Sum Int, Set (v, v))
-sizeWithout graph@Graph{..} level a b = do
+  Graph s v -> Level -> v -> v -> m (Int, Set (v, v))
+sizeWithoutStep graph@Graph{..} level a b = do
   when (a == b) $ error "sizeWithout: matching vertices"
   av <- readMutVar allVertices
   let Just bl = Map.lookup b av
   bSucc <- goToLevelGEQ (level + 1) bl
-  (bNeighbourCounts, bEdges) <- case bSucc of
+  bEdges <- case bSucc of
     Nothing -> foldSize bl
     Just bAncestor -> do
       foldSize bAncestor
   bSize <-  maybe (return 1) count bSucc
-  return (Sum bSize <> bNeighbourCounts, bEdges)
+  return (bSize, bEdges)
   where
-    foldSize :: StructuralTree a0 a1 a2 a3 a4 s v -> m (Sum Int, Set (v, v))
+    foldSize :: StructuralTree a0 a1 a2 a3 a4 s v -> m (Set (v, v))
     foldSize node = do
       readMutVar node >>= \case
         SLeaf {lTreeEdges, groups, vertex}
@@ -736,8 +762,7 @@ sizeWithout graph@Graph{..} level a b = do
               Just s -> do
                 let neighbours = Set.filter (\v -> (vertex, v) /= (a, b) && (vertex, v) /= (b, a)) s
                 when (Set.filter (== vertex) neighbours /= Set.empty) $ error "sizeWithout: matching neighbour"
-                neighbourResults <- mconcat <$> mapM (sizeWithout graph level vertex) (Set.toList neighbours)
-                return $ neighbourResults <> (Sum 0, Set.map (vertex,) neighbours) -- Only one-sided, not the reverse pair
+                return $ Set.map (vertex,) neighbours -- Only one-sided, not the reverse pair
           | otherwise -> return mempty
         SNode {nTreeEdges, children}
           | testBit nTreeEdges level -> foldSize children
@@ -794,13 +819,14 @@ deleteEdge graph@Graph {..} a b = do
   where
     handleTreeEdge lvl = do
       av <- readMutVar allVertices
-      (Sum bSize, bEdges) <- sizeWithout graph lvl a b
-      (Sum aSize, aEdges) <- sizeWithout graph lvl b a
-      let Just al = Map.lookup a av
-      let Just bl = Map.lookup b av
-      if aSize <= bSize
-        then handleSmaller a lvl al aEdges
-        else handleSmaller b lvl bl bEdges
+      smaller <- findSmaller graph lvl a b
+      case smaller of
+        Left (aSize, aEdges) -> do
+          let Just al = Map.lookup a av
+          handleSmaller a lvl al aEdges
+        Right (bSize, bEdges) -> do
+          let Just bl = Map.lookup b av
+          handleSmaller b lvl bl bEdges
 
     handleSmaller vertex lvl al aEdges = do
           alVs <- subtreeVertices al
