@@ -1,9 +1,17 @@
 -- | This module implements full dynamic grah connectivity.
 --
 -- It is based on:
--- /Poly-logarithmic deterministic fully-dynamic algorithms for connectivity,
--- minimum spanning tree, 2-edge, and biconnectivity/ by /Jacob Holm, Kristian
--- de Lichtenberg and Mikkel Thorup/ (1998).
+-- /Poly-logarithmic deterministic fully-dynamic algorithms for connectivity, minimum spanning tree, 2-edge, and biconnectivity/
+-- by /Jacob Holm, Kristian de Lichtenberg and Mikkel Thorup/ (1998).
+--
+-- We use two naming conventions in this module:
+--
+-- * A prime suffix (@'@) indicates a simpler or less polymorphic version of a
+-- function or datatype.  For example, see 'empty' and 'empty'', and
+-- 'Graph' and 'Graph''.
+--
+-- * An underscore suffix (@_@) means that the return value is ignored.  For
+-- example, see 'link' and 'link_'.
 {-# LANGUAGE BangPatterns        #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE LambdaCase          #-}
@@ -38,6 +46,9 @@ module Data.Graph.Dynamic.Levels
     , insert_
     , delete
     , delete_
+
+      -- * Advanced/internal
+    , spanningForest
     ) where
 
 import           Control.Monad
@@ -50,6 +61,7 @@ import qualified Data.List                          as L
 import           Data.Maybe                         (fromMaybe)
 import           Data.Monoid
 import           Data.Primitive.MutVar
+import qualified Data.Tree                          as DT
 import qualified Data.Vector.Mutable                as VM
 
 import qualified Data.Graph.Dynamic.EulerTour       as ET
@@ -83,7 +95,9 @@ type Graph' s v = Graph Random.Tree s v
 logBase2 :: Int -> Int
 logBase2 x = finiteBitSize x - 1 - countLeadingZeros x
 
--- | Create an empty graph.
+-- | /O(1)/
+--
+-- Create an empty graph.
 empty :: (Eq v, Hashable v, Tree t, PrimMonad m) => m (Graph t (PrimState m) v)
 empty = edgeless []
 
@@ -361,3 +375,15 @@ neighbours
 neighbours (Graph levels) x = do
     l0 <- readMutVar levels
     return $ fromMaybe HS.empty (HMS.lookup x (allEdges l0))
+
+-- | Obtain the current spanning forest.
+spanningForest
+    :: (Eq v, Hashable v, Tree t, PrimMonad m)
+    => Graph t (PrimState m) v -> m (DT.Forest v)
+spanningForest (Graph levels) = do
+  L {..} <- readMutVar levels
+  if VM.null unLevels
+    then return []
+    else do
+      (etf, _) <- VM.read unLevels 0
+      ET.spanningForest etf

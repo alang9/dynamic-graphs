@@ -2,8 +2,17 @@
 -- forest).
 --
 -- It is based on:
--- /Finding biconnected components and computing tree functions in logarithmic
--- parallel time/ by /Robert E. Tarjan and Uzi Vishki/ (1984).
+-- /Finding biconnected components and computing tree functions in logarithmic parallel time/
+-- by /Robert E. Tarjan and Uzi Vishki/ (1984).
+--
+-- We use two naming conventions in this module:
+--
+-- * A prime suffix (@'@) indicates a simpler or less polymorphic version of a
+-- function or datatype.  For example, see 'empty' and 'empty'', and
+-- 'Graph' and 'Graph''.
+--
+-- * An underscore suffix (@_@) means that the return value is ignored.  For
+-- example, see 'link' and 'link_'.
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE RecordWildCards     #-}
@@ -41,6 +50,7 @@ module Data.Graph.Dynamic.EulerTour
       -- * Advanced/internal operations
     , findRoot
     , componentSize
+    , spanningForest
 
       -- * Debugging
     , print
@@ -54,6 +64,7 @@ import qualified Data.Graph.Dynamic.Internal.Random    as Random
 import qualified Data.Graph.Dynamic.Internal.Tree      as Tree
 import           Data.Hashable                         (Hashable)
 import qualified Data.HashMap.Strict                   as HMS
+import qualified Data.HashSet                          as HS
 import qualified Data.List.NonEmpty                    as NonEmpty
 import           Data.Maybe
 import           Data.Monoid
@@ -61,6 +72,7 @@ import           Data.Proxy                            (Proxy (..))
 import qualified Data.Tree                             as DT
 import           Prelude                               hiding (print)
 
+-- | The most general type for an Euler Tour Forest.  Used by other modules.
 data Forest t a s v = ETF
     { edges :: {-# UNPACK#-} !(HT.HashTable s v (HMS.HashMap v (t s (v, v) a)))
     , toMonoid :: v -> v -> a
@@ -102,7 +114,9 @@ deleteTree (ETF ht _ _) x y = do
             let m1 = HMS.delete y m0 in
             if HMS.null m1 then HT.delete ht x else HT.insert ht x m1
 
--- | Create the empty tree.
+-- | /O(1)/
+--
+-- Create the empty tree.
 empty
     :: forall t m v a. (Tree.Tree t, PrimMonad m)
     => (v -> v -> a) -> m (Forest t a (PrimState m) v)
@@ -116,7 +130,9 @@ empty'
     :: PrimMonad m => m (Graph' (PrimState m) v)
 empty' = empty (\_ _ -> ())
 
--- | Create a graph with the given vertices but no edges.
+-- | /O(v*log(v))/
+--
+-- Create a graph with the given vertices but no edges.
 edgeless
     :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, Monoid a)
     => (v -> v -> a) -> [v] -> m (Forest t a (PrimState m) v)
@@ -173,7 +189,9 @@ findRoot etf v = do
         Nothing -> return Nothing
         Just t  -> Just <$> Tree.root t
 
--- | Remove an edge in between two vertices.  If there is no edge in between
+-- | /O(log(v))/
+--
+-- Remove an edge in between two vertices.  If there is no edge in between
 -- these vertices, do nothing.  Return whether or not an edge was actually
 -- removed.
 cut
@@ -222,19 +240,25 @@ reroot t = do
     t1 <- maybe (return t) (t `Tree.cons`) mbPost
     maybe (return t1) (t1 `Tree.append`) mbPre
 
--- | Check if this edge exists in the graph.
+-- | /O(log(v))/
+--
+-- Check if this edge exists in the graph.
 edge
     :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m)
     => Forest t a (PrimState m) v -> v -> v -> m Bool
 edge etf a b = isJust <$> lookupTree etf a b
 
--- | Check if this vertex exists in the graph.
+-- | /O(log(v))/
+--
+-- Check if this vertex exists in the graph.
 vertex
     :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m)
     => Forest t a (PrimState m) v -> v -> m Bool
 vertex etf a = isJust <$> lookupTree etf a a
 
--- | Check if a path exists in between two vertices.
+-- | /O(log(v))/
+--
+-- Check if a path exists in between two vertices.
 connected
     :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, Monoid a)
     => Forest t a (PrimState m) v -> v -> v -> m (Maybe Bool)
@@ -245,7 +269,9 @@ connected etf a b = do
     (Just aLoop, Just bLoop) -> Just <$> Tree.connected aLoop bLoop
     _                        -> return Nothing
 
--- | Insert an edge in between two vertices.  If the vertices are already
+-- | /O(log(v))/
+--
+-- Insert an edge in between two vertices.  If the vertices are already
 -- connected, we don't do anything, since this is an acyclic graph.  Returns
 -- whether or not an edge was actually inserted.
 link
@@ -285,7 +311,9 @@ link_
     => Forest t a (PrimState m) v -> v -> v -> m ()
 link_ etf a b = void (link etf a b)
 
--- | Insert a new vertex.  Do nothing if it is already there.  Returns whether
+-- | /O(log(v))/
+--
+-- Insert a new vertex.  Do nothing if it is already there.  Returns whether
 -- or not a vertex was inserted in the graph.
 insert
     :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, Monoid a)
@@ -305,7 +333,9 @@ insert_
     => Forest t a (PrimState m) v -> v -> m ()
 insert_ etf v = void (insert etf v)
 
--- | Get all neighbours of the given vertex.
+-- | /O(log(v) + n/ where /n/ is the number of neighbours
+--
+-- Get all neighbours of the given vertex.
 neighbours
     :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, Monoid a)
     => Forest t a (PrimState m) v -> v -> m [v]
@@ -320,7 +350,9 @@ maybeNeighbours (ETF ht _ _) x = do
         Nothing -> return Nothing
         Just m  -> return $ Just $ filter (/= x) $ map fst $ HMS.toList m
 
--- | Remove a vertex from the graph, if it exists.  If it is connected to any
+-- | /O(n*log(v))/ where /n/ is the number of neighbours
+--
+-- Remove a vertex from the graph, if it exists.  If it is connected to any
 -- other vertices, those edges are cut first.  Returns whether or not a vertex
 -- was removed from the graph.
 delete
@@ -366,3 +398,41 @@ componentSize etf v = do
     Just tree -> do
       root <- Tree.root tree
       getSum <$> Tree.aggregate root
+
+-- | Obtain the current spanning forest.
+spanningForest
+    :: (Eq v, Hashable v, Tree.Tree t, Monoid a, PrimMonad m)
+    => Forest t a (PrimState m) v -> m (DT.Forest v)
+spanningForest (ETF ht _ _) = do
+    maps <- map snd <$> HT.toList ht
+    let trees = concatMap (map snd . HMS.toList) maps
+    go HS.empty [] trees
+  where
+    go _visited acc [] = return acc
+    go visited acc (t : ts) = do
+        root  <- Tree.readRoot t
+        label <- Tree.label root
+        if HS.member label visited then
+            go visited acc ts
+        else do
+            st <- spanningTree root
+            go (HS.insert label visited) (st : acc) ts
+
+spanningTree
+    :: (Eq v, Hashable v, PrimMonad m, Monoid e, Tree.Tree t)
+    => t (PrimState m) (v, v) e -> m (DT.Tree v)
+spanningTree tree = do
+    list <- Tree.toList tree
+    case list of
+        ((r, _) : _) -> return $ DT.Node r (fst $ go Nothing [] list)
+        _            -> fail
+            "Data.Graph.Dynamic..EulerTour.spanningTree: empty list"
+  where
+    go _mbParent acc []      = (acc, [])
+    go mbParent acc ((a, b) : edges)
+        | a == b             = go mbParent acc edges  -- Ignore self-loops.
+        | Just b == mbParent = (acc, edges)  -- Like a closing bracket.
+        | otherwise          =
+            -- Parse child.
+            let (child, rest) = go (Just a) [] edges in
+            go mbParent (DT.Node b child : acc) rest

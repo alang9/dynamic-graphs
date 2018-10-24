@@ -18,7 +18,7 @@ module Data.Graph.Dynamic.Internal.Splay
     , toList
 
     -- * Debugging only
-    , getRoot
+    , readRoot
     , freeze
     , print
     , assertInvariants
@@ -69,10 +69,10 @@ singleton :: PrimMonad m => a -> v -> m (Tree (PrimState m) a v)
 singleton tLabel tValue =
     fmap Tree $ MutVar.newMutVar $! T nil nil nil tLabel tValue tValue
 
-getRoot :: PrimMonad m => Tree (PrimState m) a v -> m (Tree (PrimState m) a v)
-getRoot tree = do
+readRoot :: PrimMonad m => Tree (PrimState m) a v -> m (Tree (PrimState m) a v)
+readRoot tree = do
     T {..} <- MutVar.readMutVar (unTree tree)
-    if tParent == nil then return tree else getRoot tParent
+    if tParent == nil then return tree else readRoot tParent
 
 -- | `lv` must be a singleton tree
 cons
@@ -148,6 +148,12 @@ root
 root x = do
     _ <- splay x
     return x
+
+label
+    :: (PrimMonad m, Monoid v)
+    => Tree (PrimState m) a v
+    -> m a
+label (Tree xv) = tLabel <$> MutVar.readMutVar xv
 
 aggregate
     :: (PrimMonad m, Monoid v)
@@ -493,6 +499,8 @@ instance Class.Tree Tree where
     split       = split
     connected   = connected
     root        = root
+    readRoot    = readRoot
+    label       = label
     aggregate   = aggregate
     toList      = toList
 

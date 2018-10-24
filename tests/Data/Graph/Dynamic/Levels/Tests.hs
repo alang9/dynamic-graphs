@@ -8,7 +8,7 @@
 
 module Data.Graph.Dynamic.Levels.Tests where
 
-import           Control.Monad                        (foldM)
+import           Control.Monad                        (foldM, forM_)
 import           Control.Monad.ST
 import           Data.Graph.Dynamic.Action
 import           Data.Graph.Dynamic.Internal.Tree     (Tree)
@@ -16,7 +16,7 @@ import qualified Data.Graph.Dynamic.Levels            as Levels
 import qualified Data.Graph.Dynamic.Program           as Program
 import qualified Data.Graph.Dynamic.Slow              as Slow
 import           Data.Hashable                        (Hashable)
-import           Data.List                            (mapAccumL)
+import           Data.List                            (foldl', mapAccumL)
 import           Data.Maybe                           (catMaybes)
 import           Test.Framework
 import           Test.Framework.Providers.QuickCheck2
@@ -64,6 +64,22 @@ prop_program :: Program.IntGraphProgram -> ()
 prop_program (Program.IntGraphProgram p) = runST $ do
     f <- Levels.empty'
     Program.runProgram f p
+
+prop_spanningTree :: QC.Positive Int -> [Action 'LinkCut Int] -> QC.Property
+prop_spanningTree (QC.Positive n) actions =
+    Slow.isSpanningForest spanningForest slow QC.=== True
+  where
+    actions' = map (fmap (`mod` n)) actions
+
+    spanningForest = runST $ do
+        et <- Levels.edgeless' [0 .. n - 1]
+        forM_ actions' $ \action -> runGraphAction et [] action
+        Levels.spanningForest et
+
+    slow = foldl'
+        (\g a -> fst $ runSlowGraphAction g a)
+        (Slow.edgeless [0 .. n - 1])
+        actions'
 
 tests :: Test
 tests = $testGroupGenerator

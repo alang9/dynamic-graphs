@@ -68,6 +68,20 @@ class Tree (t :: * -> * -> * -> *) where
         => t (PrimState m) a v
         -> m (t (PrimState m) a v)
 
+    -- | Read the root of a tree.  This is not allowed to modify the tree (e.g.,
+    -- no splaying allowed).
+    readRoot
+        :: (PrimMonad m, Monoid v)
+        => t (PrimState m) a v
+        -> m (t (PrimState m) a v)
+    readRoot = root
+
+    -- | Read the label from a tree
+    label
+        :: (PrimMonad m, Monoid v)
+        => t (PrimState m) a v
+        -> m a
+
     -- | Read the aggregate of a tree
     aggregate
         :: (PrimMonad m, Monoid v)

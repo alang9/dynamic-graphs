@@ -122,6 +122,7 @@ executable bench-program
 
   build-depends:
     base,
+    containers,
     deepseq,
     criterion,
     dynamic-connectivity,
@@ -148,6 +149,7 @@ executable gen-program
 
   build-depends:
     base,
+    containers,
     deepseq,
     dynamic-connectivity,
     hashable,

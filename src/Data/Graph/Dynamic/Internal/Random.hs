@@ -12,6 +12,7 @@ module Data.Graph.Dynamic.Internal.Random
     , split
     , connected
     , root
+    , label
     , aggregate
     , toList
 
@@ -162,6 +163,12 @@ connected xv yv = do
     yr <- root yv
     return $ xr == yr
 
+label
+    :: (PrimMonad m, Monoid v)
+    => Tree (PrimState m) a v
+    -> m a
+label (Tree xv) = tLabel <$> MutVar.readMutVar xv
+
 aggregate
     :: (PrimMonad m, Monoid v)
     => Tree (PrimState m) a v
@@ -251,6 +258,7 @@ instance Class.Tree Tree where
     split      = split
     connected  = connected
     root       = root
+    label      = label
     aggregate  = aggregate
     toList     = toList
 
