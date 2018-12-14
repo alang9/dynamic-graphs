@@ -173,12 +173,12 @@ link_ g a b = void (link g a b)
 -- | Check if a path exists in between two vertices.
 connected
     :: (Eq v, Hashable v, Tree t, PrimMonad m)
-    => Graph t (PrimState m) v -> v -> v -> m (Maybe Bool)
-connected _ a b | a == b = return (Just True)
+    => Graph t (PrimState m) v -> v -> v -> m Bool
+connected _ a b | a == b = return True
 connected (Graph levels) a b = do
   L {..} <- readMutVar levels
   if VM.null unLevels
-    then return (Just False)
+    then return False
     else do
       (etf, _) <- VM.read unLevels 0
       ET.connected etf a b

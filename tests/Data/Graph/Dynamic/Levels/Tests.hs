@@ -37,10 +37,8 @@ runGraphAction levels xs (Toggle x y) = do
     True  -> Levels.cut_ levels x y
     False -> Levels.link_ levels x y
   return xs
-runGraphAction levels xs (Query x y) = Levels.connected levels x y >>= \case
-  Nothing -> return xs
-  Just q -> do
-    return (q:xs)
+runGraphAction levels xs (Query x y) =
+  Levels.connected levels x y >>= \q -> return (q:xs)
 
 checkActions :: QC.Positive Int -> [Action t Int] -> QC.Property
 checkActions (QC.Positive n) actions = slowResult QC.=== result

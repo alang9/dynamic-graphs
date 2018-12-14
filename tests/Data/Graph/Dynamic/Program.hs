@@ -31,7 +31,6 @@ import qualified Data.Graph.Dynamic.Slow          as Slow
 import           Data.Hashable                    (Hashable)
 import qualified Data.HashSet                     as HS
 import           Data.List                        (intersperse, (\\))
-import           Data.Maybe                       (fromMaybe)
 import           Data.Monoid                      ((<>))
 import qualified Data.Text                        as T
 import qualified Data.Text.Lazy                   as TL
@@ -141,14 +140,14 @@ instance Tree t => Interpreter (Levels.Graph t) where
     link f x y      = Levels.link_ f x y
     delete          = Levels.delete_
     cut             = Levels.cut_
-    connected f x y = fromMaybe False <$> Levels.connected f x y
+    connected f x y = Levels.connected f x y
 
 instance Tree t => Interpreter (ET.Forest t ()) where
     insert           = ET.insert_
     link f x y       = ET.link_ f x y
     delete           = ET.delete_
     cut f x y        = ET.cut_ f x y
-    connected f x y  = fromMaybe False <$> ET.connected f x y
+    connected f x y  = ET.connected f x y
 
 runProgram
     :: (Eq v, Hashable v, Show v, PrimMonad m, Interpreter f)

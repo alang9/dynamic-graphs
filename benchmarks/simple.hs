@@ -12,7 +12,7 @@ main = do
   foo <- completeGraph 250
   return $ rnf foo
 
-completeGraph :: Int -> IO [(Maybe Bool, Maybe Bool)]
+completeGraph :: Int -> IO [(Bool, Bool)]
 completeGraph n = do
   levels <- Levels.edgeless' vertices
   mapM_ (\(x, y) -> Levels.link levels x y) edges
@@ -30,7 +30,7 @@ completeGraph n = do
     valid (x, y, z) = x >= 0 && x < n && y >= 0 && y < n && z >= 0 && z < n
     edges = [(x, y) | x <- vertices, d <- adjVecs, let y = addV3 x d, valid y]
 
-completeBinaryTree :: Int -> IO [(Maybe Bool, Maybe Bool)]
+completeBinaryTree :: Int -> IO [(Bool, Bool)]
 completeBinaryTree n = do
   etf <- ETF.edgeless' [0..n-1]
   mapM_ (\(x, y) -> ETF.link etf x y) edges

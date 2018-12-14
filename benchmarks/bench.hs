@@ -13,7 +13,7 @@ main = defaultMainWith defaultConfig
     graph n = bench (show n) $ nfIO (completeGraph n)
     tree n = bench (show n) $ nfIO (completeBinaryTree n)
 
-completeGraph :: Int -> IO [(Maybe Bool, Maybe Bool)]
+completeGraph :: Int -> IO [(Bool, Bool)]
 completeGraph n = do
   levels <- Levels.edgeless' [0..n-1]
   mapM_ (\(x, y) -> Levels.link levels x y) edges
@@ -26,7 +26,7 @@ completeGraph n = do
   where
     edges = [(x, y) | x <- [0..n-1], y <- [x + 1.. n - 1]]
 
-completeBinaryTree :: Int -> IO [(Maybe Bool, Maybe Bool)]
+completeBinaryTree :: Int -> IO [(Bool, Bool)]
 completeBinaryTree n = do
   etf <- ETF.edgeless' [0..n-1]
   mapM_ (\(x, y) -> ETF.link etf x y) edges

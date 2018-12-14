@@ -261,13 +261,13 @@ vertex etf a = isJust <$> lookupTree etf a a
 -- Check if a path exists in between two vertices.
 connected
     :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, Monoid a)
-    => Forest t a (PrimState m) v -> v -> v -> m (Maybe Bool)
+    => Forest t a (PrimState m) v -> v -> v -> m Bool
 connected etf a b = do
   mbALoop <- lookupTree etf a a
   mbBLoop <- lookupTree etf b b
   case (mbALoop, mbBLoop) of
-    (Just aLoop, Just bLoop) -> Just <$> Tree.connected aLoop bLoop
-    _                        -> return Nothing
+    (Just aLoop, Just bLoop) -> Tree.connected aLoop bLoop
+    _                        -> return False
 
 -- | /O(log(v))/
 --

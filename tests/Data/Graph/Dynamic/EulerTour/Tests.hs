@@ -31,9 +31,8 @@ runForestAction etf xs (Link x y) = ET.link etf x y >> return xs
 runForestAction etf xs (Toggle x y) = ET.edge etf x y >>= \case
   True -> ET.cut etf x y >> return xs
   False -> ET.link etf x y >> return xs
-runForestAction etf xs (Query x y) = ET.connected etf x y >>= \case
-  Nothing -> return xs
-  Just q -> return (q:xs)
+runForestAction etf xs (Query x y) =
+  ET.connected etf x y >>= \q -> return (q:xs)
 
 checkActions :: QC.Positive Int -> [Action t Int] -> QC.Property
 checkActions (QC.Positive n) actions = slowResult QC.=== result
