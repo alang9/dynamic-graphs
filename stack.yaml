@@ -1,6 +1,7 @@
-resolver: 'lts-11.7'
+resolver: 'lts-12.14'
+compiler: 'ghc-8.4.2'
 packages:
 - '.'
 flags:
-  dynamic-connectivity:
+  dynamic-graphs:
     build-extra-executables: true

@@ -1,1 +1,1 @@
-# dynamic-connectivity
+# dynamic-graphs
