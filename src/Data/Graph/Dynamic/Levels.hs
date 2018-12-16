@@ -141,7 +141,9 @@ complete'
     :: (Eq v, Hashable v, PrimMonad m) => [v] -> m (Graph' (PrimState m) v)
 complete' = complete
 
--- | Insert an edge in between two vertices.  If the vertices already have
+-- | /O(log(v))/
+--
+-- Insert an edge in between two vertices.  If the vertices already have
 -- an edge between them don't do anything.  Returns whether or not an edge was
 -- actually inserted.
 link
@@ -170,7 +172,9 @@ link_
     => Graph t (PrimState m) v -> v -> v -> m ()
 link_ g a b = void (link g a b)
 
--- | Check if a path exists in between two vertices.
+-- | /O(log(v))/
+--
+-- Check if a path exists in between two vertices.
 connected
     :: (Eq v, Hashable v, Tree t, PrimMonad m)
     => Graph t (PrimState m) v -> v -> v -> m Bool
@@ -199,7 +203,9 @@ vertex (Graph levels) a = do
     L {..} <- readMutVar levels
     return $ a `HMS.member` allEdges
 
--- | Remove an edge in between two vertices.  If there is no edge in between
+-- | Ammortized /O(log² v)/
+--
+-- Remove an edge in between two vertices.  If there is no edge in between
 -- these vertices, do nothing.  Return whether or not an edge was actually
 -- removed.
 cut
