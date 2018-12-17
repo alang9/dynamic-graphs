@@ -1,10 +1,8 @@
 {-# LANGUAGE BangPatterns #-}
-import Criterion.Main
+import           Criterion.Main
 
-import qualified Data.Graph.Dynamic.Levels as Levels
 import qualified Data.Graph.Dynamic.EulerTour as ETF
-
-import Debug.Trace
+import qualified Data.Graph.Dynamic.Levels    as Levels
 
 main :: IO ()
 main = defaultMainWith defaultConfig
@@ -15,26 +13,26 @@ main = defaultMainWith defaultConfig
     graph n = bench (show n) $ nfIO (completeGraph n)
     tree n = bench (show n) $ nfIO (completeBinaryTree n)
 
-completeGraph :: Int -> IO [(Maybe Bool, Maybe Bool)]
+completeGraph :: Int -> IO [(Bool, Bool)]
 completeGraph n = do
-  levels <- Levels.fromVertices [0..n-1]
-  mapM_ (\(x, y) -> Levels.insertEdge levels x y) edges
+  levels <- Levels.edgeless' [0..n-1]
+  mapM_ (\(x, y) -> Levels.link levels x y) edges
   mapM (\(x, y) -> do
            c1 <- Levels.connected levels x y
-           Levels.deleteEdge levels x y
+           Levels.cut levels x y
            c2 <- Levels.connected levels x y
            return (c1, c2)
        ) edges
   where
     edges = [(x, y) | x <- [0..n-1], y <- [x + 1.. n - 1]]
 
-completeBinaryTree :: Int -> IO [(Maybe Bool, Maybe Bool)]
+completeBinaryTree :: Int -> IO [(Bool, Bool)]
 completeBinaryTree n = do
-  etf <- ETF.discreteForest (\_ _ -> ()) [0..n-1]
-  mapM_ (\(x, y) -> ETF.insertEdge etf x y) edges
+  etf <- ETF.edgeless' [0..n-1]
+  mapM_ (\(x, y) -> ETF.link etf x y) edges
   mapM (\(x, y) -> do
            c1 <- ETF.connected etf x y
-           ETF.deleteEdge etf x y
+           ETF.cut etf x y
            c2 <- ETF.connected etf x y
            return (c1, c2)
        ) edges

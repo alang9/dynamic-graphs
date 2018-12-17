@@ -6,10 +6,9 @@ import qualified Data.Text.Lazy.IO          as TL
 main :: IO ()
 main = do
     errOrProgram <- Program.decodeProgram Program.decodeInt <$> TL.getContents
-    program <- either fail return errOrProgram
 
     Crit.defaultMain
-        [ Crit.bench "levels" $ Crit.nfIO $ do
-            levels <- Levels.new
+        [ Crit.env (either fail return errOrProgram) $ \program -> Crit.bench "levels" $ Crit.nfIO $ do
+            levels <- Levels.empty'
             Program.runProgram levels (program :: Program.Program Int)
         ]

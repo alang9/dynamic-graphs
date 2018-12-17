@@ -3,22 +3,22 @@
 
 {-# OPTIONS_GHC -fprof-auto #-}
 
-import qualified Data.Graph.Dynamic.Levels as Levels
+import           Control.DeepSeq
 import qualified Data.Graph.Dynamic.EulerTour as ETF
-import Control.DeepSeq
+import qualified Data.Graph.Dynamic.Levels    as Levels
 
 main :: IO ()
 main = do
   foo <- completeGraph 250
   return $ rnf foo
 
-completeGraph :: Int -> IO [(Maybe Bool, Maybe Bool)]
+completeGraph :: Int -> IO [(Bool, Bool)]
 completeGraph n = do
-  levels <- Levels.fromVertices vertices
-  mapM_ (\(x, y) -> Levels.insertEdge levels x y) edges
+  levels <- Levels.edgeless' vertices
+  mapM_ (\(x, y) -> Levels.link levels x y) edges
   mapM (\(x, y) -> do
            c1 <- Levels.connected levels x y
-           Levels.deleteEdge levels x y
+           Levels.cut levels x y
            c2 <- Levels.connected levels x y
            return (c1, c2)
        ) edges
@@ -30,13 +30,13 @@ completeGraph n = do
     valid (x, y, z) = x >= 0 && x < n && y >= 0 && y < n && z >= 0 && z < n
     edges = [(x, y) | x <- vertices, d <- adjVecs, let y = addV3 x d, valid y]
 
-completeBinaryTree :: Int -> IO [(Maybe Bool, Maybe Bool)]
+completeBinaryTree :: Int -> IO [(Bool, Bool)]
 completeBinaryTree n = do
-  etf <- ETF.discreteForest (\_ _ -> ()) [0..n-1]
-  mapM_ (\(x, y) -> ETF.insertEdge etf x y) edges
+  etf <- ETF.edgeless' [0..n-1]
+  mapM_ (\(x, y) -> ETF.link etf x y) edges
   mapM (\(x, y) -> do
            c1 <- ETF.connected etf x y
-           ETF.deleteEdge etf x y
+           ETF.cut etf x y
            c2 <- ETF.connected etf x y
            return (c1, c2)
        ) edges

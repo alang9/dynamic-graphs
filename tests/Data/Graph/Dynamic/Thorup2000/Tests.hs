@@ -19,10 +19,10 @@ import Data.Graph.Dynamic.Program
 import qualified Data.Graph.Dynamic.Thorup2000 as Thorup2000
 
 instance Interpreter Thorup2000.Graph where
-    insertVertex    = Thorup2000.insertVertex
-    insertEdge      = Thorup2000.insertEdge
-    deleteVertex    = undefined
-    deleteEdge      = Thorup2000.deleteEdge
+    insert          = Thorup2000.insertVertex
+    link            = Thorup2000.insertEdge
+    delete          = undefined
+    cut             = Thorup2000.deleteEdge
     connected f x y = fromMaybe False <$> Thorup2000.connected f x y
 
 prop_program :: IntGraphProgram -> ()

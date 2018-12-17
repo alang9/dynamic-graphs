@@ -2,8 +2,17 @@
 -- forest).
 --
 -- It is based on:
--- /Finding biconnected components and computing tree functions in logarithmic
--- parallel time/ by /Robert E. Tarjan and Uzi Vishki/ (1984).
+-- /Finding biconnected components and computing tree functions in logarithmic parallel time/
+-- by /Robert E. Tarjan and Uzi Vishki/ (1984).
+--
+-- We use two naming conventions in this module:
+--
+-- * A prime suffix (@'@) indicates a simpler or less polymorphic version of a
+-- function or datatype.  For example, see 'empty' and 'empty'', and
+-- 'Graph' and 'Graph''.
+--
+-- * An underscore suffix (@_@) means that the return value is ignored.  For
+-- example, see 'link' and 'link_'.
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE RecordWildCards     #-}
@@ -12,72 +21,92 @@ module Data.Graph.Dynamic.EulerTour
     ( -- * Type
       Forest
     , Graph
+    , Graph'
 
       -- * Construction
-    , new
+    , empty
+    , empty'
+    , edgeless
+    , edgeless'
     , fromTree
-    , discreteForest
+    , fromTree'
 
       -- * Queries
     , connected
-    , hasEdge
+    , edge
+    , vertex
+    , neighbours
 
       -- * Modifying
-    , insertEdge
-    , deleteEdge
-    , insertVertex
-    , deleteVertex
+    , link
+    , link_
+    , cut
+    , cut_
+    , insert
+    , insert_
+    , delete
+    , delete_
 
       -- * Advanced/internal operations
     , findRoot
     , componentSize
+    , spanningForest
 
       -- * Debugging
     , print
     ) where
 
-import           Control.Monad                         (foldM, forM_)
+import           Control.Monad                         (filterM, foldM, forM_,
+                                                        void)
 import           Control.Monad.Primitive
 import qualified Data.Graph.Dynamic.Internal.HashTable as HT
-import qualified Data.Graph.Dynamic.Internal.Splay     as Splay
+import qualified Data.Graph.Dynamic.Internal.Random    as Random
+import qualified Data.Graph.Dynamic.Internal.Tree      as Tree
 import           Data.Hashable                         (Hashable)
 import qualified Data.HashMap.Strict                   as HMS
-import           Data.List
+import qualified Data.HashSet                          as HS
 import qualified Data.List.NonEmpty                    as NonEmpty
 import           Data.Maybe
 import           Data.Monoid
-import qualified Data.Tree                             as Tree
+import           Data.Proxy                            (Proxy (..))
+import qualified Data.Tree                             as DT
 import           Prelude                               hiding (print)
 
-data Forest a s v = ETF
-    { edges :: {-# UNPACK#-} !(HT.HashTable s v (HMS.HashMap v (Splay.Tree s (v, v) a)))
+-- | The most general type for an Euler Tour Forest.  Used by other modules.
+data Forest t a s v = ETF
+    { edges :: {-# UNPACK#-} !(HT.HashTable s v (HMS.HashMap v (t s (v, v) a)))
     , toMonoid :: v -> v -> a
+    , treeGen :: (Tree.TreeGen t s)
     }
 
-type Graph = Forest ()
+-- | Graph type polymorphic in the tree used to represent sequences.
+type Graph t s v = Forest t () s v
+
+-- | Simple graph type.
+type Graph' s v = Graph Random.Tree s v
 
 insertTree
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Forest a s v -> v -> v -> Splay.Tree s (v, v) a -> m ()
-insertTree (ETF ht _) x y t = do
+    :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, s ~ PrimState m)
+    => Forest t a s v -> v -> v -> t s (v, v) a -> m ()
+insertTree (ETF ht _ _) x y t = do
     mbMap <- HT.lookup ht x
     case mbMap of
         Nothing -> HT.insert ht x $ HMS.singleton y t
         Just m  -> HT.insert ht x $ HMS.insert y t m
 
 lookupTree
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Forest a s v -> v -> v -> m (Maybe (Splay.Tree s (v, v) (a)))
-lookupTree (ETF ht _) x y = do
+    :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, s ~ PrimState m)
+    => Forest t a s v -> v -> v -> m (Maybe (t s (v, v) (a)))
+lookupTree (ETF ht _ _) x y = do
     mbMap <- HT.lookup ht x
     case mbMap of
         Nothing -> return Nothing
         Just m  -> return $ HMS.lookup y m
 
 deleteTree
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Forest a s v -> v -> v -> m ()
-deleteTree (ETF ht _) x y = do
+    :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, s ~ PrimState m)
+    => Forest t a s v -> v -> v -> m ()
+deleteTree (ETF ht _ _) x y = do
     mbMap <- HT.lookup ht x
     case mbMap of
         Nothing -> return ()
@@ -85,77 +114,109 @@ deleteTree (ETF ht _) x y = do
             let m1 = HMS.delete y m0 in
             if HMS.null m1 then HT.delete ht x else HT.insert ht x m1
 
-new :: (PrimMonad m, s ~ PrimState m) => (v -> v -> a) -> m (Forest a s v)
-new f = do
+-- | /O(1)/
+--
+-- Create the empty tree.
+empty
+    :: forall t m v a. (Tree.Tree t, PrimMonad m)
+    => (v -> v -> a) -> m (Forest t a (PrimState m) v)
+empty f = do
   ht <- HT.new
-  return $ ETF ht f
+  tg <- Tree.newTreeGen (Proxy :: Proxy t)
+  return $ ETF ht f tg
 
--- values in nodes must be unique
+-- | Simple version of 'empty'.
+empty'
+    :: PrimMonad m => m (Graph' (PrimState m) v)
+empty' = empty (\_ _ -> ())
+
+-- | /O(v*log(v))/
+--
+-- Create a graph with the given vertices but no edges.
+edgeless
+    :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, Monoid a)
+    => (v -> v -> a) -> [v] -> m (Forest t a (PrimState m) v)
+edgeless toMonoid vs = do
+    etf <- empty toMonoid
+    forM_ vs $ \v -> do
+        node <- Tree.singleton (treeGen etf) (v, v) (toMonoid v v)
+        insertTree etf v v node
+    return etf
+
+-- | Simple version of 'edgeless'.
+edgeless'
+    :: (Eq v, Hashable v, PrimMonad m)
+    => [v] -> m (Graph' (PrimState m) v)
+edgeless' = edgeless (\_ _ -> ())
+
+-- | Create a graph from a 'DT.Tree'.  Note that the values in nodes must be
+-- unique.
 fromTree
-    :: forall v m s a. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
-    => (v -> v -> a) -> Tree.Tree v -> m (Forest a s v)
+    :: forall v m t a. (Eq v, Hashable v, Tree.Tree t, PrimMonad m, Monoid a)
+    => (v -> v -> a) -> DT.Tree v -> m (Forest t a (PrimState m) v)
 fromTree toMonoid tree = do
-    etf <- new toMonoid
+    etf <- empty toMonoid
     _ <- go etf tree
     return etf
   where
-    go etf (Tree.Node l children) = do
-      node0 <- Splay.singleton (l, l) (toMonoid l l)
+    go etf (DT.Node l children) = do
+      node0 <- Tree.singleton (treeGen etf) (l, l) (toMonoid l l)
       insertTree etf l l node0
       foldM (go' etf l) node0 children
 
-    go' etf parent node0 tr@(Tree.Node l _) = do
+    go' etf parent node0 tr@(DT.Node l _) = do
       lnode     <- go etf tr
-      parentToL <- Splay.singleton (parent, l) (toMonoid parent l)
-      lToParent <- Splay.singleton (l, parent) (toMonoid l parent)
+      parentToL <- Tree.singleton (treeGen etf) (parent, l) (toMonoid parent l)
+      lToParent <- Tree.singleton (treeGen etf) (l, parent) (toMonoid l parent)
 
-      node1 <- Splay.concat $ node0 NonEmpty.:| [parentToL, lnode, lToParent]
+      node1 <- Tree.concat $ node0 NonEmpty.:| [parentToL, lnode, lToParent]
       insertTree etf l parent lToParent
       insertTree etf parent l parentToL
       return node1
 
-discreteForest
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => (v -> v -> a) -> [v] -> m (Forest a s v)
-discreteForest toMonoid vs = do
-    etf <- new toMonoid
-    forM_ vs $ \v -> do
-        node <- Splay.singleton (v, v) (toMonoid v v)
-        insertTree etf v v node
-    return etf
+-- | Simple version of 'fromTree'.
+fromTree'
+    :: (Eq v, Hashable v, PrimMonad m)
+    => DT.Tree v -> m (Graph' (PrimState m) v)
+fromTree' = fromTree (\_ _ -> ())
 
 findRoot
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
-    => Forest a s v -> v -> m (Maybe (Splay.Tree s (v, v) a))
+    :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, s ~ PrimState m, Monoid a)
+    => Forest t a s v -> v -> m (Maybe (t s (v, v) a))
 findRoot etf v = do
     mbTree <- lookupTree etf v v
     case mbTree of
         Nothing -> return Nothing
-        Just t  -> Just <$> Splay.root t
+        Just t  -> Just <$> Tree.root t
 
-deleteEdge
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
-    => Forest a s v -> v -> v -> m Bool
-deleteEdge etf a b = do
+-- | /O(log(v))/
+--
+-- Remove an edge in between two vertices.  If there is no edge in between
+-- these vertices, do nothing.  Return whether or not an edge was actually
+-- removed.
+cut
+    :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, Monoid a)
+    => Forest t a (PrimState m) v -> v -> v -> m Bool
+cut etf a b = do
   mbAb <- lookupTree etf a b
   mbBa <- lookupTree etf b a
   case (mbAb, mbBa) of
     _ | a == b -> return False -- Can't cut self-loops
     (Just ab, Just ba) -> do
-      (part1, part2) <- Splay.split ab
+      (part1, part2) <- Tree.split ab
 
       baIsInPart1 <- case part1 of
-        Just p -> Splay.connected p ba
+        Just p -> Tree.connected p ba
         _      -> return False
 
       (mbL, _, mbR) <- if baIsInPart1 then do
-        (part3, part4) <- Splay.split ba
+        (part3, part4) <- Tree.split ba
         return (part3, part4, part2)
       else do
-        (part3, part4) <- Splay.split ba
+        (part3, part4) <- Tree.split ba
         return (part1, part3, part4)
 
-      _ <- sequenceA $ Splay.append <$> mbL <*> mbR
+      _ <- sequenceA $ Tree.append <$> mbL <*> mbR
       deleteTree etf a b
       deleteTree etf b a
       return True
@@ -163,50 +224,75 @@ deleteEdge etf a b = do
     (Nothing, _) -> return False -- No edge to cut
     (_, Nothing) -> return False -- No edge to cut
 
+-- | Version of 'cut' which ignores the result.
+cut_
+    :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, Monoid a)
+    => Forest t a (PrimState m) v -> v -> v -> m ()
+cut_ etf a b = void (cut etf a b)
+
 -- | reroot the represented tree by shifting the euler tour.  Returns the new
 -- root.
 reroot
-    :: (PrimMonad m, s ~ PrimState m, Monoid v)
-    => Splay.Tree s a v -> m (Splay.Tree s a v)
+    :: (Tree.Tree t, PrimMonad m, s ~ PrimState m, Monoid v)
+    => t s a v -> m (t s a v)
 reroot t = do
-    (mbPre, mbPost) <- Splay.split t
-    t1 <- maybe (return t) (t `Splay.cons`) mbPost
-    maybe (return t1) (t1 `Splay.append`) mbPre
+    (mbPre, mbPost) <- Tree.split t
+    t1 <- maybe (return t) (t `Tree.cons`) mbPost
+    maybe (return t1) (t1 `Tree.append`) mbPre
 
-hasEdge
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Forest a s v -> v -> v -> m Bool
-hasEdge etf a b = isJust <$> lookupTree etf a b
+-- | /O(log(v))/
+--
+-- Check if this edge exists in the graph.
+edge
+    :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m)
+    => Forest t a (PrimState m) v -> v -> v -> m Bool
+edge etf a b = isJust <$> lookupTree etf a b
 
+-- | /O(log(v))/
+--
+-- Check if this vertex exists in the graph.
+vertex
+    :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m)
+    => Forest t a (PrimState m) v -> v -> m Bool
+vertex etf a = isJust <$> lookupTree etf a a
+
+-- | /O(log(v))/
+--
+-- Check if a path exists in between two vertices.
 connected
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
-    => Forest a s v -> v -> v -> m (Maybe Bool)
+    :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, Monoid a)
+    => Forest t a (PrimState m) v -> v -> v -> m Bool
 connected etf a b = do
   mbALoop <- lookupTree etf a a
   mbBLoop <- lookupTree etf b b
   case (mbALoop, mbBLoop) of
-    (Just aLoop, Just bLoop) -> Just <$> Splay.connected aLoop bLoop
-    _                        -> return Nothing
+    (Just aLoop, Just bLoop) -> Tree.connected aLoop bLoop
+    _                        -> return False
 
-insertEdge
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
-    => Forest a s v -> v -> v -> m Bool
-insertEdge etf@ETF{..} a b = do
+-- | /O(log(v))/
+--
+-- Insert an edge in between two vertices.  If the vertices are already
+-- connected, we don't do anything, since this is an acyclic graph.  Returns
+-- whether or not an edge was actually inserted.
+link
+    :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, Monoid a)
+    => Forest t a (PrimState m) v -> v -> v -> m Bool
+link etf@ETF{..} a b = do
   mbALoop <- lookupTree etf a a
   mbBLoop <- lookupTree etf b b
   case (mbALoop, mbBLoop) of
-    (Just aLoop, Just bLoop) -> Splay.connected aLoop bLoop >>= \case
+    (Just aLoop, Just bLoop) -> Tree.connected aLoop bLoop >>= \case
         True -> return False
         False -> do
 
           bLoop1            <- reroot bLoop
-          abNode            <- Splay.singleton (a, b) (toMonoid a b)
-          baNode            <- Splay.singleton (b, a) (toMonoid b a)
-          bLoop2            <- abNode `Splay.cons` bLoop1
-          bLoop3            <- bLoop2 `Splay.snoc` baNode
-          (mbPreA, mbPostA) <- Splay.split aLoop
+          abNode            <- Tree.singleton treeGen (a, b) (toMonoid a b)
+          baNode            <- Tree.singleton treeGen (b, a) (toMonoid b a)
+          bLoop2            <- abNode `Tree.cons` bLoop1
+          bLoop3            <- bLoop2 `Tree.snoc` baNode
+          (mbPreA, mbPostA) <- Tree.split aLoop
 
-          _ <- Splay.concat $
+          _ <- Tree.concat $
             aLoop NonEmpty.:| catMaybes
             [ Just bLoop3
             , mbPostA
@@ -219,50 +305,134 @@ insertEdge etf@ETF{..} a b = do
 
     _ -> return False
 
-insertVertex
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Forest a s v -> v -> m ()
-insertVertex etf@ETF{..} v = do
+-- | Version of 'link' which ignores the result.
+link_
+    :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, Monoid a)
+    => Forest t a (PrimState m) v -> v -> v -> m ()
+link_ etf a b = void (link etf a b)
+
+-- | /O(log(v))/
+--
+-- Insert a new vertex.  Do nothing if it is already there.  Returns whether
+-- or not a vertex was inserted in the graph.
+insert
+    :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, Monoid a)
+    => Forest t a (PrimState m) v -> v -> m Bool
+insert etf@ETF{..} v = do
     mbTree <- lookupTree etf v v
     case mbTree of
-        Just  _ -> return ()  -- It's already there
+        Just  _ -> return False
         Nothing -> do
-            node <- Splay.singleton (v, v) (toMonoid v v)
+            node <- Tree.singleton treeGen (v, v) (toMonoid v v)
             insertTree etf v v node
+            return True
 
+-- | Version of 'insert' which ignores the result.
+insert_
+    :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, Monoid a)
+    => Forest t a (PrimState m) v -> v -> m ()
+insert_ etf v = void (insert etf v)
+
+-- | /O(log(v) + n/ where /n/ is the number of neighbours
+--
+-- Get all neighbours of the given vertex.
 neighbours
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Forest a s v -> v -> m [v]
-neighbours (ETF ht _) x = do
+    :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, Monoid a)
+    => Forest t a (PrimState m) v -> v -> m [v]
+neighbours etf x = fromMaybe [] <$> maybeNeighbours etf x
+
+maybeNeighbours
+    :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, Monoid a)
+    => Forest t a (PrimState m) v -> v -> m (Maybe [v])
+maybeNeighbours (ETF ht _ _) x = do
     mbMap <- HT.lookup ht x
     case mbMap of
-        Nothing -> return []
-        Just m  -> return $ filter (/= x) $ map fst $ HMS.toList m
+        Nothing -> return Nothing
+        Just m  -> return $ Just $ filter (/= x) $ map fst $ HMS.toList m
 
-deleteVertex
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Monoid a)
-    => Forest a s v -> v -> m ()
-deleteVertex etf x = do
-    nbs <- neighbours etf x
-    forM_ nbs $ \y -> deleteEdge etf x y
-    deleteTree etf x x
+-- | /O(n*log(v))/ where /n/ is the number of neighbours
+--
+-- Remove a vertex from the graph, if it exists.  If it is connected to any
+-- other vertices, those edges are cut first.  Returns whether or not a vertex
+-- was removed from the graph.
+delete
+    :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, Monoid a)
+    => Forest t a (PrimState m) v -> v -> m Bool
+delete etf x = do
+    mbNbs <- maybeNeighbours etf x
+    case mbNbs of
+        Nothing  -> return False
+        Just nbs -> do
+            forM_ nbs $ \y -> cut etf x y
+            deleteTree etf x x
+            return True
 
-print :: (Show a, Monoid b) => Forest b RealWorld a -> IO ()
-print (ETF ht _) = do
-  maps <- map snd <$> HT.toList ht
-  let trees = concatMap (map snd . HMS.toList) maps
-  roots <- mapM Splay.root trees
-  forM_ (nub roots) $ \root -> do
-    Splay.print root
-    putStrLn ""
+-- | Version of 'delete' which ignores the result.
+delete_
+    :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, Monoid a)
+    => Forest t a (PrimState m) v -> v -> m ()
+delete_ etf x = void (delete etf x)
+
+print :: (Show a, Monoid b, Tree.TestTree t) => Forest t b RealWorld a -> IO ()
+print (ETF ht _ _) = do
+    maps <- map snd <$> HT.toList ht
+    let trees = concatMap (map snd . HMS.toList) maps
+    comps <- components trees
+    forM_ comps $ \comp -> do
+        root <- Tree.root comp
+        Tree.print root
+        putStrLn ""
+  where
+    components [] = return []
+    components (t : ts) = do
+        ts' <- filterM (fmap not . Tree.connected t) ts
+        (t :) <$> components ts'
 
 componentSize
-    :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m)
-    => Forest (Sum Int) s v -> v -> m Int
+    :: (Eq v, Hashable v, Tree.Tree t, PrimMonad m, s ~ PrimState m)
+    => Forest t (Sum Int) s v -> v -> m Int
 componentSize etf v = do
   mbTree <- lookupTree etf v v
   case mbTree of
     Nothing -> return 0
     Just tree -> do
-      root <- Splay.root tree
-      getSum <$> Splay.aggregate root
+      root <- Tree.root tree
+      getSum <$> Tree.aggregate root
+
+-- | Obtain the current spanning forest.
+spanningForest
+    :: (Eq v, Hashable v, Tree.Tree t, Monoid a, PrimMonad m)
+    => Forest t a (PrimState m) v -> m (DT.Forest v)
+spanningForest (ETF ht _ _) = do
+    maps <- map snd <$> HT.toList ht
+    let trees = concatMap (map snd . HMS.toList) maps
+    go HS.empty [] trees
+  where
+    go _visited acc [] = return acc
+    go visited acc (t : ts) = do
+        root  <- Tree.readRoot t
+        label <- Tree.label root
+        if HS.member label visited then
+            go visited acc ts
+        else do
+            st <- spanningTree root
+            go (HS.insert label visited) (st : acc) ts
+
+spanningTree
+    :: (Eq v, Hashable v, PrimMonad m, Monoid e, Tree.Tree t)
+    => t (PrimState m) (v, v) e -> m (DT.Tree v)
+spanningTree tree = do
+    list <- Tree.toList tree
+    case list of
+        ((r, _) : _) -> return $ DT.Node r (fst $ go Nothing [] list)
+        _            -> fail
+            "Data.Graph.Dynamic..EulerTour.spanningTree: empty list"
+  where
+    go _mbParent acc []      = (acc, [])
+    go mbParent acc ((a, b) : edges)
+        | a == b             = go mbParent acc edges  -- Ignore self-loops.
+        | Just b == mbParent = (acc, edges)  -- Like a closing bracket.
+        | otherwise          =
+            -- Parse child.
+            let (child, rest) = go (Just a) [] edges in
+            go mbParent (DT.Node b child : acc) rest

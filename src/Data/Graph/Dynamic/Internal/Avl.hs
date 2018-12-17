@@ -1,390 +1,483 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE BangPatterns     #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MultiWayIf       #-}
+{-# LANGUAGE RecordWildCards  #-}
+{-# LANGUAGE TypeFamilies     #-}
+module Data.Graph.Dynamic.Internal.Avl
+    ( Tree
 
-module Data.Graph.Dynamic.Internal.Avl where
+    , singleton
+    , append
+    , concat
+    , join
+    , split
+    , root
+    , connected
+    , label
+    , aggregate
+    , toList
 
-import Data.Monoid ((<>))
-import Control.Monad
-import Control.Monad.Primitive
-import Data.Maybe (fromJust, catMaybes)
-import Data.Primitive.MutVar
-import qualified Data.Tree as Tree
+    -- * Debugging only
+    , freeze
+    , print
+    , assertInvariants
+    , assertSingleton
+    , assertRoot
+    ) where
 
-data Node s a v = Node
-  { parent :: Maybe (Tree s a v)
-  , lower :: Maybe (LowerNode s a v)
-  }
+import           Control.Monad                    (foldM, when)
+import           Control.Monad.Primitive          (PrimMonad (..))
+import qualified Data.Graph.Dynamic.Internal.Tree as Class
+import           Data.List.NonEmpty               (NonEmpty)
+import qualified Data.List.NonEmpty               as NonEmpty
+import           Data.Monoid                      ((<>))
+import           Data.Primitive.MutVar            (MutVar)
+import qualified Data.Primitive.MutVar            as MutVar
+import qualified Data.Tree                        as Tree
+import           Prelude                          hiding (concat, print)
 
-data LowerNode s a v = LowerNode
-  { label :: a
-  , height :: !Int
-  , value :: !v
-  , aggregate :: !v
-  , leftChild :: !(Tree s a v)
-  , rightChild :: !(Tree s a v)
-  }
+data Tree s a v = Tree
+    { tParent :: {-# UNPACK #-} !(MutVar s (Tree s a v))
+    , tLeft   :: {-# UNPACK #-} !(MutVar s (Tree s a v))
+    , tRight  :: {-# UNPACK #-} !(MutVar s (Tree s a v))
+    , tAggs   :: {-# UNPACK #-} !(MutVar s (Aggs v))
+    , tLabel  :: !a
+    , tValue  :: !v
+    }
 
-type Tree s a v = MutVar s (Node s a v)
+instance Eq (Tree s a v) where
+    -- Reference equality through a MutVar.
+    t1 == t2 = tParent t1 == tParent t2
 
--- | Join 2 trees, with a new node in the middle. Returns the new node (not necessarily the root of the tree)
-merge :: (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> a -> v -> Tree s a v -> m (Tree s a v)
-merge l ca cv r = do
-  newL <- empty
-  newR <- empty
-  new <- newMutVar Node {parent = Nothing, lower = Just LowerNode {label = ca, value = cv, aggregate = cv, leftChild = newL, rightChild = newR, height = 0}}
-  merge' l new r
-  return new
+data Aggs v = Aggs
+    { aHeight    :: {-# UNPACK #-} !Int
+    , aAggregate :: !v
+    } deriving (Eq, Show)
 
-merge' :: (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> Tree s a v -> Tree s a v -> m ()
-merge' l c r = do
-  l' <- readMutVar l
-  r' <- readMutVar r
-  let lh = height' l'
-  let rh = height' r'
-  let la = aggregate' l'
-  let ra = aggregate' r'
-  case () of
-    _ | abs (lh - rh) <= 1 -> do
-        void $ cutChildren c
-        void $ cutParent c
-        c' <- readMutVar c
-        case lower c' of
-          Nothing -> error "merge': c must have lower node"
-          Just c_ -> do
-            let newHeight = max lh rh + 1
-            let newAggregate = la <> value c_ <> ra
-            writeMutVar c $ c' {lower = Just c_ {leftChild = l, rightChild = r, height = newHeight, aggregate = newAggregate}}
-            writeMutVar l $ l' {parent = Just c}
-            writeMutVar r $ r' {parent = Just c}
-        case (parent l', parent r') of
-          (Nothing, Nothing) -> return ()
-          (Just p, Nothing) -> do
-            modifyMutVar p $ \p' -> p' {lower = Just (fromJust $ lower p') {rightChild = c}}
-            writeMutVar c $ c' {parent = Just p}
-            rebalance p
-          (Nothing, Just p) -> do
-            modifyMutVar p $ \p' -> p' {lower = Just (fromJust $ lower p') {leftChild = c}}
-            writeMutVar c $ c' {parent = Just p}
-            rebalance p
-          (Just _, Just _) -> error "merge': illegal state"
-      | lh > rh -> do
-        let Just l_ = lower l'
-        merge' (rightChild l_) c r
-      | rh > lh -> do
-        let Just r_ = lower r'
-        merge' l c (leftChild r_)
-      | otherwise -> error "merge': impossible clause"
+emptyAggs :: Monoid v => Aggs v
+emptyAggs = Aggs 0 mempty
+
+singletonAggs :: v -> Aggs v
+singletonAggs = Aggs 1
+
+joinAggs :: Monoid v => Aggs v -> v -> Aggs v -> Aggs v
+joinAggs (Aggs lh la) a (Aggs rh ra) =
+    Aggs (max lh rh + 1) (la <> a <> ra)
+
+singleton :: PrimMonad m => a -> v -> m (Tree (PrimState m) a v)
+singleton tLabel tValue = do
+    tParent <- MutVar.newMutVar undefined
+    tLeft   <- MutVar.newMutVar undefined
+    tRight  <- MutVar.newMutVar undefined
+    tAggs   <- MutVar.newMutVar $ singletonAggs tValue
+    let tree = Tree {..}
+    MutVar.writeMutVar tParent tree
+    MutVar.writeMutVar tLeft   tree
+    MutVar.writeMutVar tRight  tree
+    return tree
+
+root :: PrimMonad m => Tree (PrimState m) a v -> m (Tree (PrimState m) a v)
+root tree@Tree {..} = do
+    parent <- MutVar.readMutVar tParent
+    if parent == tree then return tree else root parent
+
+concat
+    :: (PrimMonad m, Monoid v)
+    => NonEmpty (Tree (PrimState m) a v)
+    -> m (Tree (PrimState m) a v)
+concat (x0 NonEmpty.:| xs0) =
+    foldM append x0 xs0
+
+split
+    :: (PrimMonad m, Monoid v)
+    => Tree (PrimState m) a v
+    -> m (Maybe (Tree (PrimState m) a v), Maybe (Tree (PrimState m) a v))
+split x0 = do
+    (mbL, mbR, p, left) <- cut x0
+    if p == x0 then
+        return (mbL, mbR)
+    else do
+        upwards mbL mbR p left
   where
-    height' Node {..} = maybe (-1) height lower
-    aggregate' Node {..} = maybe mempty aggregate lower
+    upwards lacc0 racc0 x left0 = do
+        (mbL, mbR, p, left1) <- cut x
+        if left0 then do
+            racc1 <- join racc0 x mbR
+            if p == x then
+                return (lacc0, Just racc1)
+            else
+                upwards lacc0 (Just racc1) p left1
+        else do
+            lacc1 <- join mbL x lacc0
+            if p == x then
+                return (Just lacc1, racc0)
+            else
+                upwards (Just lacc1) racc0 p left1
 
-deleteLeftmost :: (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> m (Maybe (Tree s a v, Tree s a v))
-deleteLeftmost t = do
-  t' <- readMutVar t
-  case lower t' of
-    Nothing -> return Nothing
-    Just t_ -> do
-      try <- deleteLeftmost (leftChild t_)
-      case try of
-        Just _ -> return try
-        Nothing -> do
-          m'tc <- cutChildren t
-          case m'tc of
-            Nothing -> error "deleteLeftmost: invalid state"
-            Just (_, tr) -> do
-              void $ swapChild t tr
-              rebalanceParent tr
-              return $ Just (t, tr)
+    cut x = do
+        p  <- MutVar.readMutVar (tParent x)
+        pl <- MutVar.readMutVar (tLeft p)
+        l <- MutVar.readMutVar (tLeft x)
+        r <- MutVar.readMutVar (tRight x)
+        when (l /= x) $ removeParent l
+        when (r /= x) $ removeParent r
+        removeParent x
+        removeLeft  x
+        removeRight x
+        updateAggs x
+        if pl == x then removeLeft p else removeRight p
+        return
+            ( if l == x then Nothing else Just l
+            , if r == x then Nothing else Just r
+            , p
+            , pl == x
+            )
 
-deleteRightmost :: (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> m (Maybe (Tree s a v, Tree s a v))
-deleteRightmost t = do
-  t' <- readMutVar t
-  case lower t' of
-    Nothing -> return Nothing
-    Just t_ -> do
-      try <- deleteRightmost (rightChild t_)
-      case try of
-        Just _ -> return try
-        Nothing -> do
-          m'tc <- cutChildren t
-          case m'tc of
-            Nothing -> error "deleteRightmost: invalid state"
-            Just (tl, _) -> do
-              void $ swapChild t tl
-              rebalanceParent tl
-              return $ Just (tl, t)
-
-append :: (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> Tree s a v -> m Bool
-append a b = do
-  m'aSplit <- deleteRightmost a
-  case m'aSplit of
-    Just (al, ar) -> do
-      alRoot <- root al
-      merge' alRoot ar b
-      return True
-    Nothing -> do
-      m'bSplit <- deleteLeftmost b
-      case m'bSplit of
-        Just (bl, br) -> do
-          brRoot <- root br
-          merge' a bl brRoot
-          return True
-        Nothing -> return False
-
-cutChildren :: (PrimMonad m, s ~ PrimState m) => Tree s a v -> m (Maybe (Tree s a v, Tree s a v))
-cutChildren t = do
-  t' <- readMutVar t
-  case lower t' of
-    Nothing -> return Nothing
-    Just t_ -> do
-      newL <- empty
-      newR <- empty
-      writeMutVar t $ t' {lower = Just t_ {leftChild = newL, rightChild = newR}}
-      modifyMutVar' (leftChild t_) $ \l' -> l' {parent = Nothing}
-      modifyMutVar' (rightChild t_) $ \r' -> r' {parent = Nothing}
-      return $ Just (leftChild t_, rightChild t_)
-
-cutParent :: (PrimMonad m, s ~ PrimState m) => Tree s a v -> m (Maybe (Tree s a v))
-cutParent t = do
-  t' <- readMutVar t
-  case parent t' of
-    Nothing -> return Nothing
-    Just p -> do
-      writeMutVar t $ t' {parent = Nothing}
-      newChild <- empty
-      modifyMutVar p $ \p' -> case lower p' of
-        Nothing -> error "cutParent: invalid state"
-        Just p_
-          | leftChild p_ == t -> p' {lower = Just p_ {leftChild = newChild}}
-          | rightChild p_ == t -> p' {lower = Just p_ {rightChild = newChild}}
-          | otherwise -> error "cutParent: invalid State"
-      return (Just p)
-
--- | replaced a by b in a's parent. Returns False on failure. Doesn't rebalance the parent.
-swapChild :: (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> Tree s a v -> m Bool
-swapChild a b = do
-  a' <- readMutVar a
-  case parent a' of
-    Nothing -> return False
-    Just p -> do
-      p' <- readMutVar p
-      case lower p' of
-        Nothing -> error "swapChild: invalid state"
-        Just p_
-          | leftChild p_ == a -> writeMutVar p p' {lower = Just p_ { leftChild = b }}
-          | rightChild p_ == a -> writeMutVar p p' {lower = Just p_ { rightChild = b }}
-          | otherwise -> error "swapChild: invalid state"
-      writeMutVar a a' {parent = Nothing}
-      modifyMutVar' b $ \b' -> b' {parent = Just p}
-      return True
-
-empty :: (PrimMonad m, s ~ PrimState m) => m (Tree s a v)
-empty = newMutVar (Node Nothing Nothing)
-
-split ::
-  (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) =>
-  Tree s a v -> m (Tree s a v, Tree s a v)
-split t = do
-  m'children <- cutChildren t
-  case m'children of
-    Just (l, r) -> go l r
-    Nothing -> do
-      l <- empty
-      r <- empty
-      go l r
+append
+    :: (PrimMonad m, Monoid v)
+    => Tree (PrimState m) a v
+    -> Tree (PrimState m) a v
+    -> m (Tree (PrimState m) a v)
+append l0 r0 = do
+    -- NOTE: there is a faster way to do this by just following the right spine
+    -- and joining along the way.
+    rm <- getRightMost l0
+    (mbL, mbR) <- split rm
+    case mbR of
+        Just _ -> error "append: invalid state"
+        _      -> assertSingleton rm
+    join mbL rm (Just r0)
   where
-    go l r = do
-      t' <- readMutVar t
-      case parent t' of
-        Nothing -> return (l, r)
-        Just p -> do
-          p' <- readMutVar p
-          let Just p_ = lower p'
-          case () of
-            _ | leftChild p_ == t -> do
-                  pcc <- cutChildren p
-                  let Just (_, pr) = pcc
-                  _ <- swapChild p t
-                  merge' r p pr
-                  pRoot <- root p
-                  go l pRoot
-              | rightChild p_ == t -> do
-                  pcc <- cutChildren p
-                  let Just (pl, _) = pcc
-                  _ <- swapChild p t
-                  merge' pl p l
-                  pRoot <- root p
-                  go pRoot r
-              | otherwise -> error $ "split: invalid state"
+    getRightMost x = do
+        r <- MutVar.readMutVar (tRight x)
+        if r == x then return x else getRightMost r
 
-root :: (PrimMonad m, s ~ PrimState m) => Tree s a v -> m (Tree s a v)
-root t = do
-  t' <- readMutVar t
-  case parent t' of
-    Nothing -> return t
-    Just p -> root p
+connected
+    :: (PrimMonad m, Monoid v)
+    => Tree (PrimState m) a v
+    -> Tree (PrimState m) a v
+    -> m Bool
+connected x y = do
+    xr <- root x
+    yr <- root y
+    return $ xr == yr
 
-snoc ::
-  (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> a -> v -> m (Tree s a v)
-snoc t a v = do
-  emptyTree <- empty
-  merge t a v emptyTree
+label :: (PrimMonad m, Monoid v) => Tree (PrimState m) a v -> m a
+label = return . tLabel
 
-cons ::
-  (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => a -> v -> Tree s a v -> m (Tree s a v)
-cons a v t = do
-  emptyTree <- empty
-  merge emptyTree a v t
+aggregate :: (PrimMonad m, Monoid v) => Tree (PrimState m) a v -> m v
+aggregate = fmap aAggregate . MutVar.readMutVar . tAggs
 
-fromList ::
-  forall m s a v. (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => [(a, v)] -> m (Tree s a v)
-fromList xs = do
-  (emptyTree :: Tree s a v) <- empty
-  foldM (\t (a, v) -> snoc t a v >>= root) emptyTree xs
-
-toList :: (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> m [a]
-toList t = do
-  t' <- readMutVar t
-  case lower t' of
-    Nothing -> return []
-    Just LowerNode {..} -> do
-      left <- toList leftChild
-      right <- toList rightChild
-      return $ left ++ label : right
-
-freeze :: (PrimMonad m, s ~ PrimState m) => Tree s a v -> m (Maybe (Tree.Tree a))
-freeze t = do
-  Node {..} <- readMutVar t
-  case lower of
-    Nothing -> return Nothing
-    Just LowerNode {..} -> do
-      children'm <- sequence [freeze leftChild, freeze rightChild]
-      let children = catMaybes children'm
-      return $ Just $ Tree.Node label children
-
-rebalanceParent :: forall m s a v. (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> m ()
-rebalanceParent t = do
-  t' <- readMutVar t
-  case parent t' of
-    Nothing -> return ()
-    Just p -> rebalance p
-
-rebalance :: forall m s a v. (PrimMonad m, s ~ PrimState m, Monoid v, Eq v) => Tree s a v -> m ()
-rebalance n = do
-  n' <- readMutVar n
-  case lower n' of
-    Nothing -> return ()
-    Just n_ -> do
-      (l'' :: Node s a v) <- readMutVar $ leftChild n_
-      (r'' :: Node s a v) <- readMutVar $ rightChild n_
-      let lh = height' l''
-      let rh = height' r''
-      let la = aggregate' l''
-      let ra = aggregate' r''
-      let newHeight = max lh rh + 1
-      let newAggregate = la <> value n_ <> ra
-      case () of
-        _ | abs (lh - rh) <= 1 ->
-          if newHeight == height n_ && newAggregate == aggregate n_
-            then return ()
-            else do
-              writeMutVar n $ n' {lower = Just n_ {height = newHeight, aggregate = newAggregate}}
-              mapM_ rebalance $ parent n'
-          | lh > rh, Just l_ <- lower l'' -> do
-              ll' <- readMutVar $ leftChild l_
-              lr' <- readMutVar $ rightChild l_
-              if height' ll' >= height' lr'
-                then do
-                  rightRotate n
-                  mapM_ rebalance $ parent l''
-                else do
-                  leftRotate $ leftChild n_
-                  rightRotate n
-                  maybe err rebalance (parent lr')
-          | lh < rh, Just r_ <- lower r'' -> do
-              rl' <- readMutVar $ leftChild r_
-              rr' <- readMutVar $ rightChild r_
-              if height' rl' <= height' rr'
-                then do
-                  leftRotate n
-                  mapM_ rebalance $ parent r''
-                else do
-                  rightRotate $ rightChild n_
-                  leftRotate n
-                  maybe err rebalance (parent rl')
-          | otherwise -> err
+-- | For debugging/testing.
+toList
+    :: PrimMonad m => Tree (PrimState m) a v -> m [a]
+toList = go []
   where
-    err = error "rebalance: invalid state"
-    height' Node {..} = maybe (-1) height lower
-    aggregate' Node {..} = maybe mempty aggregate lower
+    go acc0 tree@Tree {..} = do
+        left   <- MutVar.readMutVar tLeft
+        right  <- MutVar.readMutVar tRight
+        acc1   <- if right == tree then return acc0 else go acc0 right
+        let acc2 = tLabel : acc1
+        if left  == tree then return acc2 else go acc2 left
 
-leftRotate :: (PrimMonad m, s ~ PrimState m, Monoid v) => Tree s a v -> m ()
-leftRotate n = do
-  n' <- readMutVar n
-  let Just n_ = lower n'
-  l'' <- readMutVar $ leftChild n_
-  r'' <- readMutVar $ rightChild n_
-  let Just r_ = lower r''
-  rl'' <- readMutVar $ leftChild r_
-  rr'' <- readMutVar $ rightChild r_
-  let newNHeight = max (height' rl'') (height' l'') + 1
-  let newNAggregate = aggregate' l'' <> value n_ <> aggregate' rl''
-  let newRHeight = max (height' rr'') (newNHeight) + 1
-  let newRAggregate = newNAggregate <> value r_ <> aggregate' rr''
-  writeMutVar n $ n' {parent = Just (rightChild n_), lower = Just n_ {rightChild = leftChild r_, height = newNHeight, aggregate = newNAggregate}}
-  modifyMutVar' (leftChild r_) $ \rl' -> rl' {parent = Just n}
-  writeMutVar (rightChild n_) $ r'' {parent = parent n', lower = Just r_ {leftChild = n, height = newRHeight, aggregate = newRAggregate}}
-  forM_ (parent n') $ \p -> modifyMutVar' p $ \p' -> case lower p' of
-    Nothing -> error "leftRotate"
-    Just p_ | leftChild p_ == n -> p' {lower = Just p_ { leftChild = rightChild n_ }}
-            | rightChild p_ == n -> p' {lower = Just p_ { rightChild = rightChild n_ }}
-            | otherwise -> error "leftRotate"
-  where
-    height' Node {..} = maybe (-1) height lower
-    aggregate' Node {..} = maybe mempty aggregate lower
+join
+    :: (PrimMonad m, Monoid v)
+    => Maybe (Tree (PrimState m) a v)
+    -> Tree (PrimState m) a v  -- Must be a singleton
+    -> Maybe (Tree (PrimState m) a v)
+    -> m (Tree (PrimState m) a v)
+join mbL c mbR = do
+    lh <- maybe (return 0) (fmap aHeight . MutVar.readMutVar . tAggs) mbL
+    rh <- maybe (return 0) (fmap aHeight . MutVar.readMutVar . tAggs) mbR
+    if  | lh > rh + 1, Just l <- mbL ->
+            joinRight l c mbR
+        | rh > lh + 1, Just r <- mbR ->
+            joinLeft mbL c r
+        | otherwise -> do
+            case mbL of Just l -> setLeft  c l; _ -> return ()
+            case mbR of Just r -> setRight c r; _ -> return ()
+            updateAggs c
+            return c
 
-rightRotate :: (PrimMonad m, s ~ PrimState m, Monoid v) => Tree s a v -> m ()
-rightRotate n = do
-  n' <- readMutVar n
-  let Just n_ = lower n'
-  l'' <- readMutVar $ leftChild n_
-  r'' <- readMutVar $ rightChild n_
-  let Just l_ = lower l''
-  ll'' <- readMutVar $ leftChild l_
-  lr'' <- readMutVar $ rightChild l_
-  let newNHeight = max (height' lr'') (height' r'') + 1
-  let newNAggregate = aggregate' lr'' <> value n_ <> aggregate' r''
-  let newLHeight = max (height' ll'') (newNHeight) + 1
-  let newLAggregate = aggregate' ll'' <> value l_ <> newNAggregate
-  writeMutVar n $ n' {parent = Just (leftChild n_), lower = Just n_ {leftChild = rightChild l_, height = newNHeight, aggregate = newNAggregate}}
-  modifyMutVar' (rightChild l_) $ \lr' -> lr' {parent = Just n}
-  writeMutVar (leftChild n_) $ l'' {parent = parent n', lower = Just l_ {rightChild = n, height = newLHeight, aggregate = newLAggregate}}
-  forM_ (parent n') $ \p -> modifyMutVar' p $ \p' -> case lower p' of
-    Nothing -> error "rightRotate"
-    Just p_ | leftChild p_ == n -> p' {lower = Just p_ { leftChild = leftChild n_ }}
-            | rightChild p_ == n -> p' {lower = Just p_ { rightChild = leftChild n_ }}
-            | otherwise -> error "rightRotate"
-  where
-    height' Node {..} = maybe (-1) height lower
-    aggregate' Node {..} = maybe mempty aggregate lower
+joinLeft
+    :: (PrimMonad m, Monoid v)
+    => Maybe (Tree (PrimState m) a v)
+    -> Tree (PrimState m) a v  -- Must be a singleton
+    -> Tree (PrimState m) a v
+    -> m (Tree (PrimState m) a v)
+joinLeft mbL c r = do
+    rl  <- MutVar.readMutVar (tLeft r)
+    rla <- leftAggs r rl
 
-checkValid :: (PrimMonad m, s ~ PrimState m) => Tree s a v -> m Bool
-checkValid t = do
-  t' <- readMutVar t
-  case lower t' of
-    Nothing -> return True
-    Just t_ -> do
-      l' <- readMutVar $ leftChild t_
-      r' <- readMutVar $ rightChild t_
-      case (parent l', parent r') of
-        (Just lp, Just rp) | lp == t && rp == t -> do
-          ancestry <- (&&) <$> checkValid (leftChild t_) <*> checkValid (rightChild t_)
-          return $ ancestry && max (height' l') (height' r') + 1 == height' t'
-        _ -> return False
+    rr  <- MutVar.readMutVar (tRight r)
+    rra <- rightAggs r rr
+
+    la  <- maybe (return emptyAggs) (MutVar.readMutVar . tAggs) mbL
+
+    if aHeight rla <= aHeight la + 1 then do
+        setLeft r c
+        when (rl /= r) $ setRight c rl
+        case mbL of Just l -> setLeft c l; _ -> return ()
+
+        let !ca = joinAggs rla (tValue c) la
+
+        -- Invalidity in the parent is fixed with two rotations
+        if aHeight rra + 1 < aHeight ca then do
+            rotateLeft c rl
+            rotateRight r rl
+
+            updateAggs c
+            updateAggs r
+            updateAggsToRoot rl
+        else do
+            -- One rotation
+            updateAggs c
+            updateAggs r
+            upLeft r
+    else
+        joinLeft mbL c rl
+
+upLeft
+    :: (PrimMonad m, Monoid v)
+    => Tree (PrimState m) a v
+    -> m (Tree (PrimState m) a v)
+upLeft l = do
+    p <- MutVar.readMutVar (tParent l)
+    if p == l then
+        return l
+    else do
+        r <- MutVar.readMutVar (tRight p)
+        ra <- rightAggs p r
+        la <- leftAggs p l
+        if aHeight ra + 1 < aHeight la then do
+            rotateRight p l
+            updateAggs p
+            updateAggsToRoot l
+        else do
+            updateAggs p  -- Stuff below us might have changed.
+            upLeft p
+
+joinRight
+    :: (PrimMonad m, Monoid v)
+    => Tree (PrimState m) a v
+    -> Tree (PrimState m) a v  -- Must be a singleton
+    -> Maybe (Tree (PrimState m) a v)
+    -> m (Tree (PrimState m) a v)
+joinRight l c mbR = do
+    lr  <- MutVar.readMutVar (tRight l)
+    lra <- rightAggs l lr
+
+    ll  <- MutVar.readMutVar (tLeft l)
+    lla <- leftAggs l ll
+
+    ra <- maybe (return emptyAggs) (MutVar.readMutVar . tAggs) mbR
+
+    if aHeight lra <= aHeight ra + 1 then do
+        setRight l c
+        when (lr /= l) $ setLeft c lr
+        case mbR of Just r -> setRight c r; _ -> return ()
+
+        let !ca = joinAggs lra (tValue c) ra
+
+        -- Invalidity in the parent is fixed with two rotations
+        if aHeight lla + 1 < aHeight ca then do
+            rotateRight c lr
+            rotateLeft l lr
+
+            -- Many of these are already computed...
+            updateAggs l
+            updateAggs c
+            updateAggsToRoot lr
+        else do
+            -- One rotation
+            updateAggs c
+            updateAggs l
+            upRight l
+    else
+        joinRight lr c mbR
+
+upRight
+    :: (PrimMonad m, Monoid v)
+    => Tree (PrimState m) a v
+    -> m (Tree (PrimState m) a v)
+upRight r = do
+    p <- MutVar.readMutVar (tParent r)
+    if p == r then
+        return p
+    else do
+        l <- MutVar.readMutVar (tLeft p)
+        la <- leftAggs p l
+        ra <- rightAggs p r
+        if aHeight la + 1 < aHeight ra then do
+            rotateLeft p r
+            updateAggs p
+            updateAggsToRoot r
+        else do
+            updateAggs p  -- Stuff below us might have changed.
+            upRight p
+
+rotateLeft, rotateRight
+    :: PrimMonad m
+    => Tree (PrimState m) a v  -- X's parent
+    -> Tree (PrimState m) a v  -- X
+    -> m ()
+rotateLeft p x = do
+    b <- MutVar.readMutVar (tLeft x)
+    if b == x then removeRight p else setRight p b
+    gp <- MutVar.readMutVar (tParent p)
+    if gp == p then removeParent x else replace gp p x
+    setLeft x p
+rotateRight p x = do
+    b <- MutVar.readMutVar (tRight x)
+    if b == x then removeLeft p else setLeft p b
+    gp <- MutVar.readMutVar (tParent p)
+    if gp == p then removeParent x else replace gp p x
+    setRight x p
+
+setLeft, setRight
+    :: PrimMonad m
+    => Tree (PrimState m) a v  -- Parent
+    -> Tree (PrimState m) a v  -- New child
+    -> m ()
+setLeft p x = do
+    MutVar.writeMutVar (tParent x) p
+    MutVar.writeMutVar (tLeft p) x
+setRight p x = do
+    MutVar.writeMutVar (tParent x) p
+    MutVar.writeMutVar (tRight p) x
+
+removeParent, removeLeft, removeRight
+    :: PrimMonad m
+    => Tree (PrimState m) a v -- Parent
+    -> m ()
+removeParent x = MutVar.writeMutVar (tParent x) x
+removeLeft   x = MutVar.writeMutVar (tLeft x)   x
+removeRight  x = MutVar.writeMutVar (tRight x)  x
+
+leftAggs, rightAggs
+    :: (PrimMonad m, Monoid v)
+    => Tree (PrimState m) a v  -- Parent
+    -> Tree (PrimState m) a v  -- Left or right child
+    -> m (Aggs v)
+leftAggs  p l =
+    if p == l then return emptyAggs else MutVar.readMutVar (tAggs l)
+rightAggs p r =
+    if p == r then return emptyAggs else MutVar.readMutVar (tAggs r)
+
+-- | Replace X by Y in the tree.  X must have a parent.
+replace
+    :: PrimMonad m
+    => Tree (PrimState m) a v  -- ^ X's parent
+    -> Tree (PrimState m) a v  -- ^ X
+    -> Tree (PrimState m) a v  -- ^ Y
+    -> m ()
+replace p x y = do
+    pl <- MutVar.readMutVar (tLeft p)
+    MutVar.writeMutVar (tParent y) p
+    if pl == x
+        then MutVar.writeMutVar (tLeft p) y
+        else MutVar.writeMutVar (tRight p) y
+
+-- | Recompute the aggregate and height of a node.
+updateAggs
+    :: (Monoid v, PrimMonad m)
+    => Tree (PrimState m) a v
+    -> m ()
+updateAggs t = do
+    l  <- MutVar.readMutVar (tLeft t)
+    r  <- MutVar.readMutVar (tRight t)
+    la <- leftAggs  t l
+    ra <- rightAggs t r
+    let !agg = joinAggs la (tValue t) ra
+    MutVar.writeMutVar (tAggs t) agg
+
+-- | Recompute aggregate and height all the way to the root of the tree.
+updateAggsToRoot
+    :: (PrimMonad m, Monoid v)
+    => Tree (PrimState m) a v
+    -> m (Tree (PrimState m) a v)
+updateAggsToRoot x = do
+    updateAggs x
+    p <- MutVar.readMutVar (tParent x)
+    if p == x then return x else updateAggsToRoot p
+
+-- | For debugging/testing.
+freeze :: PrimMonad m => Tree (PrimState m) a v -> m (Tree.Tree a)
+freeze tree@Tree {..} = do
+    left  <- MutVar.readMutVar tLeft
+    right <- MutVar.readMutVar tRight
+    children  <- sequence $
+        [freeze left  | left /= tree] ++
+        [freeze right | right /= tree]
+    return $ Tree.Node tLabel children
+
+print :: Show a => Tree (PrimState IO) a v -> IO ()
+print = go 0
   where
-    height' n = case lower n of
-      Nothing -> -1
-      Just LowerNode {..} -> height
+    go d t@Tree {..} = do
+        left <- MutVar.readMutVar tLeft
+        when (left /= t) $ go (d + 1) left
+
+        putStrLn $ replicate d ' ' ++ show tLabel
+
+        right <- MutVar.readMutVar tRight
+        when (right /= t) $ go (d + 1) right
+
+assertInvariants
+    :: (PrimMonad m, Monoid v, Eq v, Show v) => Tree (PrimState m) a v -> m ()
+assertInvariants t = do
+    _ <- computeAggs t t
+    return ()
+  where
+    -- TODO: Check average
+    computeAggs p x = do
+        p' <- MutVar.readMutVar (tParent x)
+        when (p /= p') $ fail "broken parent pointer"
+
+        l <- MutVar.readMutVar (tLeft x)
+        r <- MutVar.readMutVar (tRight x)
+        la <- if l == x then return emptyAggs else computeAggs x l
+        ra <- if r == x then return emptyAggs else computeAggs x r
+
+        let actualAggs = joinAggs la (tValue x) ra
+        storedAggs <- MutVar.readMutVar (tAggs x)
+
+        when (actualAggs /= storedAggs) $ fail $
+            "error in stored aggregates: " ++ show storedAggs ++
+            ", actual: " ++ show actualAggs
+
+        when (abs (aHeight la - aHeight ra) > 1) $ fail "inbalanced"
+        return actualAggs
+
+assertSingleton :: PrimMonad m => Tree (PrimState m) a v -> m ()
+assertSingleton x = do
+    l <- MutVar.readMutVar (tLeft x)
+    r <- MutVar.readMutVar (tRight x)
+    p <- MutVar.readMutVar (tParent x)
+    when (l /= x || r /= x || p /= x) $ fail "not a singleton"
+
+assertRoot :: PrimMonad m => Tree (PrimState m) a v -> m ()
+assertRoot x = do
+    p <- MutVar.readMutVar (tParent x)
+    when (p /= x) $ fail "not the root"
+
+data TreeGen s = TreeGen
+
+instance Class.Tree Tree where
+    type TreeGen Tree = TreeGen
+    newTreeGen _ = return TreeGen
+
+    singleton _ = singleton
+    append      = append
+    split       = split
+    connected   = connected
+    root        = root
+    label       = label
+    aggregate   = aggregate
+    toList      = toList
+
+instance Class.TestTree Tree where
+    print            = print
+    assertInvariants = assertInvariants
+    assertSingleton  = assertSingleton
+    assertRoot       = assertRoot
