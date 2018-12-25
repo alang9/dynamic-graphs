@@ -40,14 +40,14 @@ type Level = Int
 type Rank = Int
 
 data ST (nt0 :: Bool) (nt1 :: Bool) (nt2 :: Bool) (nt3 :: Bool) (nt4 :: Bool) s v where
-  SLeaf :: forall b1 s v a4.
+  SLeaf :: forall s v a4.
     { lParent :: {-# UNPACK #-} !(StructuralTree 'False 'False 'False 'False a4 s v)
     , vertex :: !v
     , groups :: !(Map (EdgeType, Level) (Set v))
     , lTreeEdges :: {-# UNPACK #-} !Int
     , lNonTreeEdges :: {-# UNPACK #-} !Int
     }
-    -> ST 'True b1 'False 'False 'False s v
+    -> ST 'True 'False 'False 'False 'False s v
   SNode :: forall s v a1 a4.
     { nParent :: {-# UNPACK #-} !(StructuralTree 'False a1 'False 'False a4 s v)
     , children :: {-# UNPACK #-} !(StructuralTree 'False 'False 'True 'False 'False s v)
@@ -181,6 +181,20 @@ checkNeq str n1 n2 = do
   case eq n1 n2 of
     Just _ -> error str
     Nothing -> return ()
+
+propagateLeaf ::
+  (PrimState m ~ s, PrimMonad m) => StructuralTree 'True 'False 'False 'False 'False s v -> Int -> m ()
+propagateLeaf st i = readMutVar st >>= \case
+  st'@SLeaf {..} -> do
+      let newT = case Map.lookup (TreeEdge, i) groups of
+            Just xs | not (Set.null xs) -> setBit lTreeEdges i
+            _ -> clearBit lTreeEdges i
+      let newNT = case Map.lookup (NonTreeEdge, i) groups of
+            Just xs | not (Set.null xs) -> setBit lNonTreeEdges i
+            _ -> clearBit lNonTreeEdges i
+      when (newT /= lTreeEdges || newNT /= lNonTreeEdges) $ do
+        writeMutVar st $! st' {lTreeEdges = newT, lNonTreeEdges = newNT}
+        when ((lParent `eq` st) == Nothing) $ propagate lParent
 
 propagate :: (PrimState m ~ s, PrimMonad m) => StructuralTree b0 b1 b2 b3 b4 s v -> m ()
 propagate st = do
@@ -798,8 +812,8 @@ cut graph@Graph {..} a b = do
     Just (NonTreeEdge, level) -> do
       modifyMutVar' al $ \al' -> al' {groups = Map.adjust (Set.delete b) (NonTreeEdge, level) $ groups al'}
       modifyMutVar' bl $ \bl' -> bl' {groups = Map.adjust (Set.delete a) (NonTreeEdge, level) $ groups bl'}
-      propagate al
-      propagate bl
+      propagateLeaf al level
+      propagateLeaf bl level
       -- checkValidFromLeaf al
       -- checkValidFromLeaf bl
       -- checkGraph graph
@@ -812,8 +826,8 @@ cut graph@Graph {..} a b = do
         let group = Set.delete a $ Map.findWithDefault Set.empty (TreeEdge, level) groups
             newGroups = if Set.null group then Map.delete (TreeEdge, level) groups else Map.insert (TreeEdge, level) group groups in
         SLeaf {groups = newGroups, ..}
-      propagate al -- make this cheaper on leaves
-      propagate bl -- make this cheaper on leaves
+      propagateLeaf al level
+      propagateLeaf bl level
       when (a == b) $ error "cut: self-loop is tree edge"
       -- checkGraph graph
       handleTreeEdge level
@@ -899,8 +913,8 @@ cut graph@Graph {..} a b = do
                       Map.delete (TreeEdge, lvl) (groups v2'')}
           else v2'' {groups = Map.insertWith Set.union (TreeEdge, lvl + 1) (Set.singleton v1) $
                       Map.insert (TreeEdge, lvl) s' (groups v2'')}
-      propagate v1'
-      propagate v2'
+      propagateLeaf v1' (lvl + 1)
+      propagateLeaf v2' (lvl + 1)
       v1Ancestor <- getLevel (lvl + 1) v1'
       v2Ancestor <- getLevel (lvl + 1) v2'
       -- checkGraph graph
@@ -937,8 +951,8 @@ cut graph@Graph {..} a b = do
                               then Map.delete (NonTreeEdge, lvl) groups
                               else Map.insert (NonTreeEdge, lvl) newNeighNodeGroup groups in
                         sl {groups = newNeighNodeGroups}
-                    propagate node
-                    propagate nNode
+                    propagateLeaf node lvl
+                    propagateLeaf nNode lvl
                     modifyMutVar' allEdges $ HMS.insert (vertex, neighbour) (TreeEdge, lvl) . HMS.insert (neighbour, vertex) (TreeEdge, lvl)
                     return $ Just (vertex, neighbour)
                   else return Nothing -- TODO increase level
