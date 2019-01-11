@@ -235,7 +235,9 @@ cut (Graph levels) a b = do
           aSize <- ET.componentSize etf a
           bSize <- ET.componentSize etf b
           let (smaller, _bigger) = if aSize <= bSize then (a, b) else (b, a)
-          Just sRoot <- ET.findRoot etf smaller
+          sRoot <- fromMaybe
+              (error "root must exist because cut returned True") <$>
+              (ET.findRoot etf smaller)
 
           -- These are all edges, and vertices within the smaller tree.
           sTreeEdges <- Tree.toList sRoot
