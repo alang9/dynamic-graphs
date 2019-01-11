@@ -1,5 +1,5 @@
 Name:                dynamic-graphs
-Version:             0.1.0.1
+Version:             0.1.0.2
 Synopsis:            Dynamic graph algorithms
 Description:         A library for dynamic graph algorithms, and in particular
                      dynamic connectivity.
