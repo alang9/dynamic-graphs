@@ -1,2 +1,6 @@
 # Let's try to keep things simple.
 language: haskell
+addons:
+  apt:
+    packages:
+    - 'happy'
