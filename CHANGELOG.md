@@ -1,5 +1,8 @@
 # CHANGELOG
 
+- 0.1.0.3 (2019-01-23)
+    * Add semigroups to test dependencies
+
 - 0.1.0.2 (2019-01-12)
     * Fix build issues with GHC 8.6 and GHC 7.10
 
