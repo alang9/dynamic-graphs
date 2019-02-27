@@ -28,20 +28,18 @@ import qualified Data.Graph.Dynamic.Thorup2000        as T
 runGraphAction :: (PrimMonad m, s ~ PrimState m) =>
   Int -> T.Graph s Int -> [Bool] -> A.Action t Int -> m [Bool]
 runGraphAction n graph xs (A.Cut x y) = do
-  T.deleteEdge graph x y
+  T.cut graph x y
   return xs
 runGraphAction n graph xs (A.Link x y) = do
-  T.insertEdge graph x y
+  T.link graph x y
   return xs
 runGraphAction n graph xs (A.Toggle x y) = do
   T.hasEdge graph x y >>= \case
-    True  -> T.deleteEdge graph x y
-    False -> void $ T.insertEdge graph x y
+    True  -> T.cut graph x y
+    False -> void $ T.link graph x y
   return xs
 runGraphAction n graph xs (A.Query x y) =
-  T.connected graph x y >>= \case
-    Nothing -> return (False : xs)
-    Just q  -> return (q : xs)
+  (:xs) <$> T.connected graph x y
 
 checkActions :: Positive Int -> [A.Action t Int] -> Property
 checkActions (Positive n) actions = slowResult === result

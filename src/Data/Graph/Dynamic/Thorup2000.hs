@@ -114,9 +114,9 @@ singletonST v = do
   writeMutVar sl $ SLeaf lrl v Map.empty 0 0
   return sl
 
-insertVertex ::
+insert ::
   (Eq v, PrimMonad m, Ord v) => Graph (PrimState m) v -> v -> m ()
-insertVertex Graph {..} v = do
+insert Graph {..} v = do
   vs <- readMutVar allVertices
   case Map.lookup v vs of
     Nothing -> do
@@ -128,7 +128,7 @@ insertVertex Graph {..} v = do
 fromVertices :: (PrimMonad m, Eq v, Ord v) => [v] -> m (Graph (PrimState m) v)
 fromVertices xs = do
   n <- new
-  mapM_ (insertVertex n) xs
+  mapM_ (insert n) xs
   return n
 
 hasEdge :: (PrimMonad m, Eq v, Hashable v) => Graph (PrimState m) v -> v -> v -> m Bool
@@ -601,8 +601,8 @@ mergeLR alr blr = do
     LRLeaf {..} -> LRLeaf {lrlParent = newLR, ..}
   return newLR
 
-insertEdge :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => Graph s v -> v -> v -> m ()
-insertEdge g@Graph {..} a b = do
+link :: (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => Graph s v -> v -> v -> m ()
+link g@Graph {..} a b = do
   -- checkGraph g
   ae <- readMutVar allEdges
   case HMS.lookup (a, b) ae of
@@ -612,7 +612,7 @@ insertEdge g@Graph {..} a b = do
       conn <- connected g a b
       when (a == b && conn /= Just True) $ error $ show conn
       case conn of
-        Nothing -> error "insertEdge: TODO"
+        Nothing -> error "link: TODO"
         Just True -> do
           let Just ast = Map.lookup a av
           let Just bst = Map.lookup b av
@@ -779,8 +779,8 @@ sizeWithoutStep graph@Graph{..} level a b = do
           | testBit lrlTreeEdges level -> foldSize lrlChild
           | otherwise -> return mempty
 
-deleteEdge :: forall v s m. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => Graph s v -> v -> v -> m ()
-deleteEdge graph@Graph {..} a b = do
+cut :: forall v s m. (Eq v, Hashable v, PrimMonad m, s ~ PrimState m, Ord v) => Graph s v -> v -> v -> m ()
+cut graph@Graph {..} a b = do
   -- checkGraph graph
   ae <- readMutVar allEdges
   av <- readMutVar allVertices
@@ -810,7 +810,7 @@ deleteEdge graph@Graph {..} a b = do
         SLeaf {groups = newGroups, ..}
       propagate al -- make this cheaper on leaves
       propagate bl -- make this cheaper on leaves
-      when (a == b) $ error "deleteEdge: self-loop is tree edge"
+      when (a == b) $ error "cut: self-loop is tree edge"
       -- checkGraph graph
       handleTreeEdge level
       -- checkValidFromLeaf al

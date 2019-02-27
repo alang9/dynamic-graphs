@@ -33,10 +33,10 @@ completeGraphLevels n = do
 completeGraphT2000 :: Int -> IO [(Bool, Bool)]
 completeGraphT2000 n = do
   levels <- T2000.fromVertices [0..n-1]
-  mapM_ (\(x, y) -> T2000.insertEdge levels x y) edges
+  mapM_ (\(x, y) -> T2000.link levels x y) edges
   mapM (\(x, y) -> do
            c1 <- fromMaybe False <$> T2000.connected levels x y
-           T2000.deleteEdge levels x y
+           T2000.cut levels x y
            c2 <- fromMaybe False <$> T2000.connected levels x y
            return (c1, c2)
        ) edges
