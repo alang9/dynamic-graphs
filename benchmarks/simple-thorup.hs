@@ -1,0 +1,46 @@
+
+{-# LANGUAGE BangPatterns #-}
+
+{-# OPTIONS_GHC -fprof-auto #-}
+
+import           Control.DeepSeq
+import qualified Data.Graph.Dynamic.Thorup2000 as Thorup2000
+import qualified Data.Graph.Dynamic.EulerTour as ETF
+import qualified Data.Graph.Dynamic.Levels    as Levels
+
+main :: IO ()
+main = do
+  foo <- completeGrid 16
+  return $ rnf foo
+
+completeGrid :: Int -> IO [(Bool, Bool)]
+completeGrid n = do
+  graph <- Thorup2000.fromVertices vertices
+  mapM_ (\(x, y) -> Thorup2000.link graph x y) edges
+  mapM (\(x, y) -> do
+           c1 <- Thorup2000.connected graph x y
+           Thorup2000.cut graph x y
+           c2 <- Thorup2000.connected graph x y
+           return (c1, c2)
+       ) edges
+  where
+    vertices = [(x, y, z) | x <- [0..n-1], y <- [0..n-1], z <- [0..n-1]]
+    dist (x1, y1, z1) (x2, y2, z2) = abs (x1 - x2) + abs (y1 - y2) + abs (z1 - z2)
+    adjVecs = [(-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1)]
+    addV3 (x1, y1, z1) (x2, y2, z2) = (x1 + x2, y1 + y2, z1 + z2)
+    valid (x, y, z) = x >= 0 && x < n && y >= 0 && y < n && z >= 0 && z < n
+    edges = [(x, y) | x <- vertices, d <- adjVecs, let y = addV3 x d, valid y]
+
+completeBinaryTree :: Int -> IO [(Bool, Bool)]
+completeBinaryTree n = do
+  etf <- ETF.edgeless' [0..n-1]
+  mapM_ (\(x, y) -> ETF.link etf x y) edges
+  mapM (\(x, y) -> do
+           c1 <- ETF.connected etf x y
+           ETF.cut etf x y
+           c2 <- ETF.connected etf x y
+           return (c1, c2)
+       ) edges
+  return []
+  where
+    edges = [(x, y) | x <- [0..n-1], y <- filter (< n) [2 * x, 2 * x + 1]]

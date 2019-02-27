@@ -137,8 +137,12 @@ hasEdge Graph{..} x y = do
   return $ HMS.member (x, y) ae
 
 connected ::
+  (Eq v, PrimMonad m, Ord v) => Graph (PrimState m) v -> v -> v -> m Bool
+connected g a b = maybe False id <$> connected' g a b
+
+connected' ::
   (Eq v, PrimMonad m, Ord v) => Graph (PrimState m) v -> v -> v -> m (Maybe Bool)
-connected Graph {..} a b = do
+connected' Graph {..} a b = do
   allVertices' <- readMutVar allVertices
   case Map.lookup a allVertices' of
     Nothing -> return Nothing
@@ -609,7 +613,7 @@ link g@Graph {..} a b = do
     Just _ -> return ()
     Nothing -> do
       av <- readMutVar allVertices
-      conn <- connected g a b
+      conn <- connected' g a b
       when (a == b && conn /= Just True) $ error $ show conn
       case conn of
         Nothing -> error "link: TODO"
