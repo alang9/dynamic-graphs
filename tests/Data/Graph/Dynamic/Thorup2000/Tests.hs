@@ -21,7 +21,7 @@ import qualified Data.Graph.Dynamic.Thorup2000 as Thorup2000
 instance Interpreter Thorup2000.Graph where
     insert          = Thorup2000.insert
     link            = Thorup2000.link
-    delete          = undefined
+    delete          = Thorup2000.delete
     cut             = Thorup2000.cut
     connected = Thorup2000.connected
 

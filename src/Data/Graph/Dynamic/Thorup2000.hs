@@ -125,6 +125,14 @@ insert Graph {..} v = do
       modifyMutVar' numEdges succ
     Just _ -> return ()
 
+delete ::
+  (Eq v, PrimMonad m, Ord v, Hashable v) => Graph (PrimState m) v -> v -> m ()
+delete g@Graph {..} v = do
+  es <- readMutVar allEdges
+  let es' = filter (\(a, _) -> a == v) $ HMS.keys es
+  forM_ es' $ \(a, b) -> cut g a b
+  modifyMutVar' allVertices $ Map.delete v
+
 fromVertices :: (PrimMonad m, Eq v, Ord v) => [v] -> m (Graph (PrimState m) v)
 fromVertices xs = do
   n <- new
