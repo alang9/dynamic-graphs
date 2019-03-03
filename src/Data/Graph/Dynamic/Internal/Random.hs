@@ -58,7 +58,7 @@ data T s a v = T
 --
 -- They seem to offer similar performance.  We choose to use the latter since it
 -- is less likely to end up in infinite loops that way, and additionally, we can
--- move easily move e.g. x's left child to y's right child, even it is an empty
+-- more easily move e.g. x's left child to y's right child, even it is an empty
 -- child.
 nil :: Tree s a v
 nil = unsafeCoerce $ unsafePerformIO $ Tree <$> MutVar.newMutVar undefined

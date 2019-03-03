@@ -8,7 +8,7 @@ you to answer the question "are the nodes X and Y connected" at any point in
 time.
 
 This blogpost has some more information about this library:
-<https://jaspervdj.be/posts/2018-12-16-dynamic-graphs.html>.
+<https://jaspervdj.be/posts/2019-01-11-dynamic-graphs.html>.
 
 ## Installation
 
@@ -25,8 +25,7 @@ import qualified Data.Tree as T
 main :: IO ()
 main = do
     graph <- GD.empty'
-    mapM_ (GD.insert_ graph)
-        ["Akanu", "Kanoa", "Kekoa", "Kaiwi", "Onakea"]
+    mapM_ (GD.insert_ graph) ["Akanu", "Kanoa", "Kekoa", "Kaiwi", "Onakea"]
     GD.link_ graph "Akanu" "Kanoa"
     GD.link_ graph "Akanu" "Kaiwi"
     GD.link_ graph "Akanu" "Onakea"
