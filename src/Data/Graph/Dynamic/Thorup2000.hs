@@ -861,7 +861,8 @@ cut graph@Graph {..} a b = do
           -- checkGraph graph
           mapM_ (increaseLevel lvl) $ Set.toList aEdges
           -- checkGraph graph
-          Just aAncestor <- goToLevelGEQ lvl al -- Should be exactly lvl
+          aAncestor <- fromMaybe (error "missing a ancestor") <$> goToLevelGEQ lvl al -- Should be exactly lvl
+
           !_ <- readMutVar aAncestor >>= \SNode {..} -> if level == lvl then return () else error $ "bad level " ++ show (level, lvl)
           aNextParent <- readMutVar aNext >>= \SNode {..} -> getParentSNode nParent
           -- checkGraph graph
