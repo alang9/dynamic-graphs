@@ -88,6 +88,20 @@ type StructuralTree b0 b1 b2 b3 b4 s v = MutVar s (ST b0 b1 b2 b3 b4 s v)
 
 data EdgeType = TreeEdge | NonTreeEdge deriving (Show, Eq, Ord)
 
+setChildren :: (PrimMonad m, s ~ PrimState m) => StructuralTree 'False 'True 'False 'False 'False s v -> StructuralTree 'False 'False 'True 'False 'False s v -> m ()
+setChildren sNode child = modifyMutVar' sNode $ \sNode' -> sNode' {children = child}
+
+setNParent :: (PrimMonad m, s ~ PrimState m) => StructuralTree 'False 'True 'False 'False 'False s v -> StructuralTree 'False a1 'False 'False a4 s v -> m ()
+setNParent sNode np = modifyMutVar' sNode $ \SNode {..} -> SNode {nParent = np, ..}
+
+setLsPrev :: (PrimMonad m, s ~ PrimState m) => StructuralTree 'False 'False 'True 'False 'False s v -> StructuralTree 'False a1 a2 'False 'False s v -> m ()
+setLsPrev lsNode lsp = modifyMutVar' lsNode $ \LSNode {..} -> LSNode {lsPrev = lsp, ..}
+
+setLrParent :: (PrimMonad m, s ~ PrimState m) => StructuralTree 'False 'False 'False a3 a4 s v -> StructuralTree 'False 'False b2 b3 'False s v -> m ()
+setLrParent lr lrp = modifyMutVar' lr $ \case
+    LRLeaf{..} -> LRLeaf {lrlParent=lrp, ..}
+    LRNode{..} -> LRNode {lrnParent=lrp, ..}
+
 new :: (PrimMonad m, s ~ PrimState m) => m (Graph s v)
 new = do
   numEdges <- newMutVar 0
@@ -343,16 +357,14 @@ mergeST ::
 mergeST graph ast bst = do
   ast' <- readMutVar ast
   bst' <- readMutVar bst
-  bstRoot <- getRoot bst
-  astRoot <- getRoot ast
   -- checkGraph graph
   -- checkValidFromRoot bstRoot
   -- checkGraph graph
   -- checkValidFromRoot astRoot
   newLS <- mergeLS (children ast') (children bst')
-  modifyMutVar' ast $ \ast' -> ast' {children = newLS}
+  setChildren ast newLS
   -- checkNeq "mergeST" newLS ast
-  modifyMutVar' newLS $ \LSNode {..} -> LSNode {lsPrev = ast, ..}
+  setLsPrev newLS ast
   propagate ast
   deleteNode graph bst
   -- checkGraph graph
@@ -369,7 +381,7 @@ deleteNode graph node = do
   readMutVar node >>= \SNode {..} -> case eq nParent node of
       Just Refl -> return ()
       Nothing -> do
-        readMutVar nParent >>= \LRLeaf {lrlCount} -> do
+        readMutVar nParent >>= \LRLeaf {} -> do
           (m'ls1, oldLs) <- deleteLR Nothing nParent
           -- checkGraph graph
           (m'ls2, parentS) <- deleteLS oldLs
@@ -380,20 +392,20 @@ deleteNode graph node = do
             (Just ls1, Nothing) -> do
               -- checkNeq "del" ls1 parentS
               modifyMutVar' ls1 $ \LSNode {..} -> LSNode {lsPrev = parentS, ..}
-              modifyMutVar' parentS $ \SNode {..} -> SNode {children = ls1, ..}
+              modifyMutVar parentS $ \sNode' -> sNode' {children = ls1}
               propagate parentS
               -- checkValidFromLeaf ls1
             (Nothing, Just ls2) -> do
               -- checkNeq "del2" ls2 parentS
               modifyMutVar' ls2 $ \LSNode {..} -> LSNode {lsPrev = parentS, ..}
-              modifyMutVar' parentS $ \SNode {..} -> SNode {children = ls2, ..}
+              modifyMutVar' parentS $ \sNode' -> sNode' {children = ls2}
               propagate parentS
               -- checkValidFromLeaf ls2
             (Just ls1, Just ls2) -> do
               ls3 <- mergeLS ls1 ls2
               -- checkNeq "del3" ls3 parentS
               modifyMutVar' ls3 $ \LSNode {..} -> LSNode {lsPrev = parentS, ..}
-              modifyMutVar' parentS $ \SNode {..} -> SNode {children = ls3, ..}
+              modifyMutVar' parentS $ \sNode' -> sNode' {children = ls3}
               propagate parentS
               -- checkValidFromLeaf ls3
           writeMutVar node $ SNode {nParent = node, ..}
@@ -420,10 +432,8 @@ deleteLR acc node = do
                 writeMutVar lsNode $ LSNode lsNode lrnRight lsNode (t1 .|. t2) (nt1 .|. nt2) (c1 + c2)
               Just lsNext -> do
                 writeMutVar lsNode $ LSNode lsNode lrnRight lsNext (t1 .|. t2) (nt1 .|. nt2) (c1 + c2)
-                modifyMutVar' lsNext $ \LSNode {..} -> LSNode {lsPrev = lsNode, ..}
-            modifyMutVar' lrnRight $ \case
-              LRLeaf{..} -> LRLeaf {lrlParent=lsNode, ..}
-              LRNode{..} -> LRNode {lrnParent=lsNode, ..}
+                setLsPrev lsNext lsNode
+            setLrParent lrnRight lsNode
             deleteLR (Just lsNode) lrlParent
         Nothing -> case eq lrnRight node of
           Just Refl -> do
@@ -437,10 +447,8 @@ deleteLR acc node = do
                 writeMutVar lsNode $ LSNode lsNode lrnLeft lsNode (t1 .|. t2) (nt1 .|. nt2) (c1 + c2)
               Just lsNext -> do
                 writeMutVar lsNode $ LSNode lsNode lrnLeft lsNext (t1 .|. t2) (nt1 .|. nt2) (c1 + c2)
-                modifyMutVar' lsNext $ \LSNode {..} -> LSNode {lsPrev = lsNode, ..}
-            modifyMutVar' lrnLeft $ \case
-              LRLeaf{..} -> LRLeaf {lrlParent=lsNode, ..}
-              LRNode{..} -> LRNode {lrnParent=lsNode, ..}
+                setLsPrev lsNext lsNode
+            setLrParent lrnLeft lsNode
             deleteLR (Just lsNode) lrlParent
           Nothing -> error "impossible"
     LRNode {lrnParent} -> readMutVar lrnParent >>= \case
@@ -457,10 +465,8 @@ deleteLR acc node = do
                 writeMutVar lsNode $ LSNode lsNode lrnRight lsNode (t1 .|. t2) (nt1 .|. nt2) (c1 + c2)
               Just lsNext -> do
                 writeMutVar lsNode $ LSNode lsNode lrnRight lsNext (t1 .|. t2) (nt1 .|. nt2) (c1 + c2)
-                modifyMutVar' lsNext $ \LSNode {..} -> LSNode {lsPrev = lsNode, ..}
-            modifyMutVar' lrnRight $ \case
-              LRLeaf{..} -> LRLeaf {lrlParent=lsNode, ..}
-              LRNode{..} -> LRNode {lrnParent=lsNode, ..}
+                setLsPrev lsNext lsNode
+            setLrParent lrnRight lsNode
             deleteLR (Just lsNode) lrnParent
         Nothing -> case eq lrnRight node of
           Just Refl -> do
@@ -474,10 +480,8 @@ deleteLR acc node = do
                 writeMutVar lsNode $ LSNode lsNode lrnLeft lsNode (t1 .|. t2) (nt1 .|. nt2) (c1 + c2)
               Just lsNext -> do
                 writeMutVar lsNode $ LSNode lsNode lrnLeft lsNext (t1 .|. t2) (nt1 .|. nt2) (c1 + c2)
-                modifyMutVar' lsNext $ \LSNode {..} -> LSNode {lsPrev = lsNode, ..}
-            modifyMutVar' lrnLeft $ \case
-              LRLeaf{..} -> LRLeaf {lrlParent=lsNode, ..}
-              LRNode{..} -> LRNode {lrnParent=lsNode, ..}
+                setLsPrev lsNext lsNode
+            setLrParent lrnLeft lsNode
             deleteLR (Just lsNode) lrnParent
           Nothing -> error "impossible"
 
@@ -495,7 +499,7 @@ deleteLS node = readMutVar node >>= \LSNode {lsPrev = lsPrev',..} ->
         -- writeMutVar node $ error "deleteLS"
         return (Nothing, lsPrev')
     else do
-      modifyMutVar' lsNext $ \LSNode {..} -> LSNode {lsPrev = lsPrev', ..}
+      setLsPrev lsNext lsPrev'
       readMutVar lsPrev' >>= \case
         prev'@LSNode {} -> do
           writeMutVar lsPrev' prev' {lsNext = lsNext}
@@ -536,7 +540,7 @@ mergeLS als bls = do
               newLR <- case cls' of
                 LSNode {lsLocalRankTree = clrt} -> case bls' of
                   LSNode {lsLocalRankTree = blrt} -> mergeLR clrt blrt
-              modifyMutVar' newLR $ \case newLR'@LRNode{..} -> LRNode {lrnParent = cls, ..}
+              modifyMutVar' newLR $ \case LRNode{..} -> LRNode {lrnParent = cls, ..}
               writeMutVar cls $ case cls' of LSNode {..} -> LSNode {lsLocalRankTree = newLR, lsPrev = cls, ..}
               update cls
               writeMutVar bls $ error "mergLS: bls"
@@ -678,7 +682,7 @@ link g@Graph {..} a b = do
 -- Go to the highest ancestor with level greater or equal to the given level. Return Nothing if it would be a leaf node or if the input node's level is too low
 goToLevelGEQ ::
   (PrimState m ~ s, PrimMonad m) =>
-  Level -> StructuralTree a0 a1 False False False s v -> m (Maybe (StructuralTree False True False False False s v))
+  Level -> StructuralTree a0 a1 'False 'False 'False s v -> m (Maybe (StructuralTree 'False 'True 'False 'False 'False s v))
 goToLevelGEQ l a = do
   a' <- readMutVar a
   case a' of
@@ -697,7 +701,7 @@ goToLevelGEQ l a = do
 
 getLevel ::
   (PrimState m ~ s, PrimMonad m) =>
-  Level -> StructuralTree a0 a1 False False False s v -> m (StructuralTree False True False False False s v)
+  Level -> StructuralTree a0 a1 'False 'False 'False s v -> m (StructuralTree 'False 'True 'False 'False 'False s v)
 getLevel lvl n = do
   parent <- readMutVar n >>= \case
     SLeaf {..} -> getParentSNode lParent
@@ -767,7 +771,7 @@ data SizeWithoutState v = SizeWithoutState
 sizeWithoutStep ::
   forall m s v. (PrimMonad m, s ~ PrimState m, Ord v) =>
   Graph s v -> Level -> v -> v -> m (Int, Set (v, v))
-sizeWithoutStep graph@Graph{..} level a b = do
+sizeWithoutStep Graph{..} level a b = do
   when (a == b) $ error "sizeWithout: matching vertices"
   av <- readMutVar allVertices
   let Just bl = Map.lookup b av
@@ -847,28 +851,25 @@ cut graph@Graph {..} a b = do
       av <- readMutVar allVertices
       smaller <- findSmaller graph lvl a b
       case smaller of
-        Left (aSize, aEdges) -> do
+        Left (_aSize, aEdges) -> do
           let Just al = Map.lookup a av
-          handleSmaller a lvl al aEdges
-        Right (bSize, bEdges) -> do
+          handleSmaller lvl al aEdges
+        Right (_bSize, bEdges) -> do
           let Just bl = Map.lookup b av
-          handleSmaller b lvl bl bEdges
+          handleSmaller lvl bl bEdges
 
-    handleSmaller vertex lvl al aEdges = do
-          alVs <- subtreeVertices al
+    handleSmaller lvl al aEdges = do
           aNext <- getLevel (lvl + 1) al
-          aNextVs <- subtreeVertices aNext
           -- checkGraph graph
           mapM_ (increaseLevel lvl) $ Set.toList aEdges
           -- checkGraph graph
           aAncestor <- fromMaybe (error "missing a ancestor") <$> goToLevelGEQ lvl al -- Should be exactly lvl
 
           !_ <- readMutVar aAncestor >>= \SNode {..} -> if level == lvl then return () else error $ "bad level " ++ show (level, lvl)
-          aNextParent <- readMutVar aNext >>= \SNode {..} -> getParentSNode nParent
           -- checkGraph graph
           m'rep <- findReplacement lvl aNext aNext
           case m'rep of
-            Just (rep1, rep2) -> return ()
+            Just _ -> return ()
               -- checkGraph graph
             Nothing -> do
               -- checkGraph graph
@@ -896,7 +897,7 @@ cut graph@Graph {..} a b = do
                   readMutVar aGrand >>= \SNode {..} -> do
                     newLS <- mergeLS children ls
                     modifyMutVar' newLS $ \LSNode {..} -> LSNode {lsPrev = aGrand, ..}
-                    modifyMutVar' aGrand $ \SNode {..} -> SNode {children = newLS, ..}
+                    modifyMutVar' aGrand $ \sNode' -> sNode' {children = newLS}
                     -- checkValidFromRoot aGrand
                     -- checkValidFromLeaf newLS
                     -- checkGraph graph
@@ -953,12 +954,12 @@ cut graph@Graph {..} a b = do
                             else Map.insert (NonTreeEdge, lvl) newNodeGroup groups
                     when (neighbour == vertex) $ error "findReplacement: matching"
                     writeMutVar node $ SLeaf {groups = newNodeGroups, ..}
-                    modifyMutVar' nNode $ \sl@SLeaf {groups} ->
-                      let newNeighNodeGroup = Set.delete vertex $ Map.findWithDefault Set.empty (NonTreeEdge, lvl) groups
+                    modifyMutVar' nNode $ \sl@SLeaf {groups = grps} ->
+                      let newNeighNodeGroup = Set.delete vertex $ Map.findWithDefault Set.empty (NonTreeEdge, lvl) grps
                           newNeighNodeGroups = Map.insertWith Set.union (TreeEdge, lvl) (Set.singleton vertex) $
                             if Set.null newNeighNodeGroup
-                              then Map.delete (NonTreeEdge, lvl) groups
-                              else Map.insert (NonTreeEdge, lvl) newNeighNodeGroup groups in
+                              then Map.delete (NonTreeEdge, lvl) grps
+                              else Map.insert (NonTreeEdge, lvl) newNeighNodeGroup grps in
                         sl {groups = newNeighNodeGroups}
                     propagateLeaf node lvl
                     propagateLeaf nNode lvl

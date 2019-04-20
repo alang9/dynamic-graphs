@@ -15,30 +15,27 @@ import qualified Data.Graph.Dynamic.Action            as A
 import qualified Data.Graph.Dynamic.Slow              as Slow
 import           Data.List
 import           Data.Maybe
-import           Data.Primitive.MutVar
-import qualified Data.Set                             as Set
 import           Test.Framework
 import           Test.Framework.Providers.QuickCheck2
 import           Test.Framework.TH
 import           Test.QuickCheck
 
-import           Data.Graph.Dynamic.Program
 import qualified Data.Graph.Dynamic.Thorup2000        as T
 
 runGraphAction :: (PrimMonad m, s ~ PrimState m) =>
-  Int -> T.Graph s Int -> [Bool] -> A.Action t Int -> m [Bool]
-runGraphAction n graph xs (A.Cut x y) = do
+  T.Graph s Int -> [Bool] -> A.Action t Int -> m [Bool]
+runGraphAction graph xs (A.Cut x y) = do
   T.cut graph x y
   return xs
-runGraphAction n graph xs (A.Link x y) = do
+runGraphAction graph xs (A.Link x y) = do
   T.link graph x y
   return xs
-runGraphAction n graph xs (A.Toggle x y) = do
+runGraphAction graph xs (A.Toggle x y) = do
   T.hasEdge graph x y >>= \case
     True  -> T.cut graph x y
     False -> void $ T.link graph x y
   return xs
-runGraphAction n graph xs (A.Query x y) =
+runGraphAction graph xs (A.Query x y) =
   (:xs) <$> T.connected graph x y
 
 checkActions :: Positive Int -> [A.Action t Int] -> Property
@@ -50,7 +47,7 @@ checkActions (Positive n) actions = slowResult === result
     result :: [Bool]
     result = runST $ do
       initialGraph <- T.fromVertices [0..n-1]
-      results <- foldM (runGraphAction n initialGraph) [] actions'
+      results <- foldM (runGraphAction initialGraph) [] actions'
       return $ reverse results
 
 prop_graph_linkcut :: Positive Int -> [A.Action 'A.LinkCut Int] -> Property

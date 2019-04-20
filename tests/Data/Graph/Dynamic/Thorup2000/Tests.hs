@@ -1,4 +1,3 @@
-
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -10,7 +9,6 @@
 module Data.Graph.Dynamic.Thorup2000.Tests where
 
 import Control.Monad.ST
-import Data.Maybe
 import Test.Framework
 import Test.Framework.TH
 import Test.Framework.Providers.QuickCheck2
