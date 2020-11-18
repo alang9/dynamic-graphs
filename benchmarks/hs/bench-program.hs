@@ -8,7 +8,7 @@ main = do
     errOrProgram <- Program.decodeProgram Program.decodeInt <$> TL.getContents
 
     Crit.defaultMain
-        [ Crit.env (either fail return errOrProgram) $ \program -> Crit.bench "levels" $ Crit.nfIO $ do
+        [ Crit.env (either error return errOrProgram) $ \program -> Crit.bench "levels" $ Crit.nfIO $ do
             levels <- Levels.empty'
             Program.runProgram levels (program :: Program.Program Int)
         ]

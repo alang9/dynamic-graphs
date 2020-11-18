@@ -164,7 +164,7 @@ runProgram f = go (0 :: Int)
             Cut x y -> cut f x y
             Connected x y expected -> do
                 actual <- connected f x y
-                when (expected /= actual) $ fail $
+                when (expected /= actual) $ error $
                     "Error after " ++ show i ++
                     " instructions, expected " ++ show expected ++
                     " but got " ++ show actual ++ " in instruction " ++

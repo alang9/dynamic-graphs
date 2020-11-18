@@ -222,7 +222,7 @@ assertInvariants t = do
     computeAgg pt xt@(Tree xv) = do
         x <- MutVar.readMutVar xv
         let pt' = tParent x
-        when (pt /= pt') $ fail "broken parent pointer"
+        when (pt /= pt') $ error "broken parent pointer"
 
         let lt = tLeft x
         let rt = tRight x
@@ -232,7 +232,7 @@ assertInvariants t = do
         let actualAgg = la <> (tValue x) <> ra
         let storedAgg = tAgg x
 
-        when (actualAgg /= storedAgg) $ fail $
+        when (actualAgg /= storedAgg) $ error $
             "error in stored aggregates: " ++ show storedAgg ++
             ", actual: " ++ show actualAgg
 
@@ -242,12 +242,12 @@ assertSingleton :: PrimMonad m => Tree (PrimState m) a v -> m ()
 assertSingleton (Tree xv) = do
     T {..} <- MutVar.readMutVar xv
     when (tLeft /= nil || tRight /= nil || tParent /= nil) $
-        fail "not a singleton"
+        error "not a singleton"
 
 assertRoot :: PrimMonad m => Tree (PrimState m) a v -> m ()
 assertRoot (Tree xv) = do
     T {..} <- MutVar.readMutVar xv
-    when (tParent /= nil) $ fail "not the root"
+    when (tParent /= nil) $ error "not the root"
 
 instance Class.Tree Tree where
     type TreeGen Tree = MWC.Gen

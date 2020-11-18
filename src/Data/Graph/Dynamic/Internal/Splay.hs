@@ -472,7 +472,7 @@ assertInvariants t = do
     computeAgg pt xt@(Tree xv) = do
         x' <- MutVar.readMutVar xv
         let p' = tParent x'
-        when (pt /= p') $ fail "broken parent pointer"
+        when (pt /= p') $ error "broken parent pointer"
 
         let l = tLeft x'
         let r = tRight x'
@@ -482,7 +482,7 @@ assertInvariants t = do
         let actualAgg = la <> (tValue x') <> ra
         let storedAgg = tAgg x'
 
-        when (actualAgg /= storedAgg) $ fail $
+        when (actualAgg /= storedAgg) $ error $
             "error in stored aggregates: " ++ show storedAgg ++
             ", actual: " ++ show actualAgg
 

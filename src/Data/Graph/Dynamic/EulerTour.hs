@@ -425,7 +425,7 @@ spanningTree tree = do
     list <- Tree.toList tree
     case list of
         ((r, _) : _) -> return $ DT.Node r (fst $ go Nothing [] list)
-        _            -> fail
+        _            -> error
             "Data.Graph.Dynamic..EulerTour.spanningTree: empty list"
   where
     go _mbParent acc []      = (acc, [])

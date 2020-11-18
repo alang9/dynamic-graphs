@@ -432,7 +432,7 @@ assertInvariants t = do
     -- TODO: Check average
     computeAggs p x = do
         p' <- MutVar.readMutVar (tParent x)
-        when (p /= p') $ fail "broken parent pointer"
+        when (p /= p') $ error "broken parent pointer"
 
         l <- MutVar.readMutVar (tLeft x)
         r <- MutVar.readMutVar (tRight x)
@@ -442,11 +442,11 @@ assertInvariants t = do
         let actualAggs = joinAggs la (tValue x) ra
         storedAggs <- MutVar.readMutVar (tAggs x)
 
-        when (actualAggs /= storedAggs) $ fail $
+        when (actualAggs /= storedAggs) $ error $
             "error in stored aggregates: " ++ show storedAggs ++
             ", actual: " ++ show actualAggs
 
-        when (abs (aHeight la - aHeight ra) > 1) $ fail "inbalanced"
+        when (abs (aHeight la - aHeight ra) > 1) $ error "inbalanced"
         return actualAggs
 
 assertSingleton :: PrimMonad m => Tree (PrimState m) a v -> m ()
@@ -454,12 +454,12 @@ assertSingleton x = do
     l <- MutVar.readMutVar (tLeft x)
     r <- MutVar.readMutVar (tRight x)
     p <- MutVar.readMutVar (tParent x)
-    when (l /= x || r /= x || p /= x) $ fail "not a singleton"
+    when (l /= x || r /= x || p /= x) $ error "not a singleton"
 
 assertRoot :: PrimMonad m => Tree (PrimState m) a v -> m ()
 assertRoot x = do
     p <- MutVar.readMutVar (tParent x)
-    when (p /= x) $ fail "not the root"
+    when (p /= x) $ error "not the root"
 
 data TreeGen s = TreeGen
 
