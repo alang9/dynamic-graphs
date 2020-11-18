@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns         #-}
+{-# LANGUAGE CPP                  #-}
 {-# LANGUAGE MultiWayIf           #-}
 {-# LANGUAGE RecordWildCards      #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
@@ -27,7 +28,11 @@ module Data.Graph.Dynamic.Internal.Splay
 import           Control.Monad                    (when)
 import           Control.Monad.Primitive          (PrimMonad (..))
 import qualified Data.Graph.Dynamic.Internal.Tree as Class
+
+#if !(MIN_VERSION_base(4,8,0))
 import           Data.Monoid                      ((<>))
+#endif
+
 import           Data.Primitive.MutVar            (MutVar)
 import qualified Data.Primitive.MutVar            as MutVar
 import qualified Data.Tree                        as Tree

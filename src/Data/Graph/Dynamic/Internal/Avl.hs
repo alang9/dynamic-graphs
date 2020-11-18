@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns     #-}
+{-# LANGUAGE CPP              #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiWayIf       #-}
 {-# LANGUAGE RecordWildCards  #-}
@@ -30,7 +31,11 @@ import           Control.Monad.Primitive          (PrimMonad (..))
 import qualified Data.Graph.Dynamic.Internal.Tree as Class
 import           Data.List.NonEmpty               (NonEmpty)
 import qualified Data.List.NonEmpty               as NonEmpty
+
+#if !(MIN_VERSION_base(4,8,0))
 import           Data.Monoid                      ((<>))
+#endif
+
 import           Data.Primitive.MutVar            (MutVar)
 import qualified Data.Primitive.MutVar            as MutVar
 import qualified Data.Tree                        as Tree

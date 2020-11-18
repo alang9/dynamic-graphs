@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                 #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell     #-}
 module Data.Graph.Dynamic.Internal.Tree.Tests
@@ -12,7 +13,11 @@ import           Data.Graph.Dynamic.Internal.Tree
 import           Data.List.NonEmpty               (NonEmpty)
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Proxy                       (Proxy)
-import           Data.Semigroup                   ((<>))
+
+#if !(MIN_VERSION_base(4,8,0))
+import           Data.Monoid                      ((<>))
+#endif
+
 import qualified Test.QuickCheck                  as QC
 
 data BuildTree a v
